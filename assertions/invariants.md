@@ -1,4 +1,26 @@
+# Lagoon v0.4.0 Protocol Invariants
 
+> **Note**: These invariants are specific to **v0.4.0**. Version v0.5.0 introduces synchronous deposits and NAV expiration features that are not covered here.
+## Protocol Overview
+
+Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a request-settle-claim pattern for deposits and redemptions. The protocol uses an epoch-based system where users request deposits/redeems, a trusted Safe settles these requests after valuation updates, and users can then claim their shares or assets.
+
+### Key Components
+
+1. **Vault.sol** - Main vault contract combining ERC4626, ERC7540, fee management, and access control
+2. **ERC7540.sol** - Core async deposit/redeem logic with epoch-based settlement
+3. **FeeManager.sol** - Handles management fees (time-based) and performance fees (high water mark)
+4. **Roles.sol** - Access control for Safe, Valuation Manager, Whitelist Manager, and Owner
+5. **Silo.sol** - Temporary holding contract for pending deposits (assets) and redeems (shares)
+6. **State System** - Vault transitions through Open → Closing → Closed states
+
+### Architecture Patterns
+
+- **ERC4626** (Tokenized Vault Standard) + **ERC7540** (Async Vaults)
+- **OpenZeppelin Upgradeable** contracts with ERC7201 storage namespacing
+- **Safe Pattern** - External Safe multisig holds protocol assets
+- **Epoch-based Settlement** - Odd epochs for deposits (1, 3, 5...), even for redeems (2, 4, 6...)
+- **Request-Settle-Claim Pattern** - Three-phase user flow for async operations
 ---
 
 ## Critical Invariants
