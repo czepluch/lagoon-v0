@@ -1,26 +1,7 @@
-# Lagoon Protocol Invariants - Tier 1 (For Phylax Assertions Implementation)
+# Lagoon Protocol Invariants - Tier 1
 
-> **Focus**: This document contains only **Tier 1 (Critical)** invariants selected for Phylax assertions implementation. For complete invariant documentation including Tier 2 and Tier 3, see `invariants.md`.
-
+> **Focus**: This document contains only **Tier 1** invariants selected for assertions implementation. For complete invariant documentation including Tier 2 and Tier 3, see `invariants.md`.
 > **Coverage**: Both **v0.4.0** (async-only) and **v0.5.0** (synchronous deposits + NAV expiration)
-
----
-
-## Implementation Pattern: Induction-Based Verification
-
-Many invariants reference global sums (e.g., "vault balance >= Σ(all users' claimable requests)") which are impossible to verify directly since we cannot enumerate all users from contract storage. Instead, we use **induction-based verification**: verify that each incremental change is consistent, which implies the global invariant holds over time.
-
-**Pattern**: For each transaction, track only the users/state affected in THIS transaction (via events), and verify:
-```
-Δ(global_state) == Σ(individual_changes_from_events)
-```
-
-**Example**: To verify `siloBalance >= Σ(pending requests)`:
-1. Parse events: DepositRequest (+assets), DepositRequestCanceled (-assets), SettleDeposit (-assets)
-2. Calculate expected: `Δ(silo) = requests_added - requests_canceled - requests_settled`
-3. Verify: `postSiloBalance - preSiloBalance == Δ(silo)`
-
-If every transaction maintains consistency, the global invariant holds by induction. This approach only requires parsing events from the current transaction (~1-10 events), making it gas-efficient and feasible for runtime assertions.
 
 ---
 
@@ -83,7 +64,7 @@ If every transaction maintains consistency, the global invariant holds by induct
 - Users cannot claim from epochs where `requestId > lastEpochIdSettled`
 - Once an epoch is settled, its conversion rate (totalAssets/totalSupply at settlement) is locked forever
 - Calling `updateNewTotalAssets()` increments epoch IDs by 2 if there are pending requests
-- **v0.5.0 specific**: `syncDeposit()` must NOT increment `depositEpochId` (only `updateNewTotalAssets()` does)
+- **v0.5.0 only**: `syncDeposit()` must NOT increment `depositEpochId` (only `updateNewTotalAssets()` does)
 
 **Why Critical**: Epoch ordering violations allow users to claim assets/shares at incorrect conversion rates, enabling front-running attacks where users can choose favorable pricing by timing their claims. Double-claiming via epoch manipulation.
 
@@ -111,7 +92,7 @@ If every transaction maintains consistency, the global invariant holds by induct
 - After `settleRedeem()`: Shares from settled epoch burned, but shares from current epoch remain in Silo
 - Users can only have one pending request per type (deposit OR redeem) at a time
 - `cancelRequestDeposit()` must only work in the same epoch: `requestId == depositEpochId`
-- **v0.5.0 specific**: `syncDeposit()` must NOT interact with Silo balances (assets go directly to Safe)
+- **v0.5.0 only**: `syncDeposit()` must NOT interact with Silo balances (assets go directly to Safe)
 
 **Why Critical**: Silo accounting mismatches allow users to withdraw more than they deposited or claim shares they didn't pay for. The Silo is the staging area where user funds are vulnerable before settlement.
 
@@ -264,37 +245,28 @@ If every transaction maintains consistency, the global invariant holds by induct
 
 ## General Implementation Guidelines
 
-### Event-Based Validation (Primary Method)
+### Induction-Based Verification Pattern
 
-- Use `ph.getLogs()` from credible-std to track protocol events
-- More reliable than recalculating or balance checks
-- Track v0.4.0 events: `SettleDeposit`, `SettleRedeem`, `DepositRequest`, `RedeemRequest`
-- Track v0.5.0 events: `DepositSync`, `TotalAssetsLifespanUpdated`
+Many invariants reference global sums (e.g., "vault balance >= Σ(all users' claimable requests)") which are impossible to verify directly since we cannot enumerate all users from contract storage. Instead, we use **induction-based verification**: verify that each incremental change is consistent, which implies the global invariant holds over time.
 
-### Balance Checks (Secondary Method)
+**Pattern**: For each transaction, track only the users/state affected in THIS transaction (via events), and verify:
 
-- Use as sanity checks with tolerance for edge cases
-- Allow `>=` for airdrops/donations to Silo
-- Vault balance equality checks are subject to airdrops - use with caution
+```
+Δ(global_state) == Σ(individual_changes_from_events)
+```
 
-### Gas Budget
+**Example**: To verify `siloBalance >= Σ(pending requests)`:
 
-- Target < 100k gas per assertion function
-- Each assertion function has independent 100k gas limit
-- Check basic invariants first (fail fast with early returns)
-- Avoid expensive operations in loops
+1. Parse events: DepositRequest (+assets), DepositRequestCanceled (-assets), SettleDeposit (-assets)
+2. Calculate expected: `Δ(silo) = requests_added - requests_canceled - requests_settled`
+3. Verify: `postSiloBalance - preSiloBalance == Δ(silo)`
 
-### Upgrade Protection Focus
-
-- Critical variable initialization checks
-- Storage slot preservation verification
-- State machine integrity
-- Epoch parity maintenance
+If every transaction maintains consistency, the global invariant holds by induction. This approach only requires parsing events from the current transaction (~1-10 events), making it gas-efficient and feasible for runtime assertions.
 
 ### Trigger Functions
 
-- **Invariant 1**: Trigger on `settleDeposit()`, `settleRedeem()`, `close()`, `syncDeposit()` (v0.5.0)
-- **Invariant 2**: Trigger on `updateNewTotalAssets()`, `settleDeposit()`, `settleRedeem()`, `syncDeposit()` (v0.5.0)
-- **Invariant 3**: Trigger on `requestDeposit()`, `settleDeposit()`, `cancelRequestDeposit()`, `syncDeposit()` (v0.5.0)
-- **Invariant 4** (v0.5.0): Trigger on `syncDeposit()`, `requestDeposit()`
-- **Invariant 5** (v0.5.0): Trigger on `settleDeposit()`, `settleRedeem()`, `updateTotalAssetsLifespan()`, `expireTotalAssets()`
+- **Invariant 1** (v0.4.0 & v0.5.0): Trigger on `settleDeposit()`, `settleRedeem()`, `close()`, and `syncDeposit()` (v0.5.0 only)
+- **Invariant 2** (v0.4.0 & v0.5.0): Trigger on `updateNewTotalAssets()`, `settleDeposit()`, `settleRedeem()`, and `syncDeposit()` (v0.5.0 only)
+- **Invariant 3** (v0.4.0 & v0.5.0): Trigger on `requestDeposit()`, `settleDeposit()`, `cancelRequestDeposit()`, and `syncDeposit()` (v0.5.0 only)
+- **Invariant 4** (v0.5.0 only): Trigger on `syncDeposit()` and `requestDeposit()`
+- **Invariant 5** (v0.5.0 only): Trigger on `settleDeposit()`, `settleRedeem()`, `updateTotalAssetsLifespan()`, and `expireTotalAssets()`
