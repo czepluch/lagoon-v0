@@ -35,19 +35,24 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 **A. Accounting Conservation (All States)**
 
-- After `settleDeposit()`: `totalAssets_new = totalAssets_old + pendingAssets`
-- After `settleRedeem()`: `totalAssets_new = totalAssets_old - assetsWithdrawn`
+- After `_settleDeposit()`: `totalAssets_new = totalAssets_old + pendingAssets`
+- After `_settleRedeem()`: `totalAssets_new = totalAssets_old - assetsWithdrawn`
 - Track settlement events (`SettleDeposit`, `SettleRedeem`) to verify accounting changes match event data
 - Fee minting increases `totalSupply` but does not directly change `totalAssets` (fees dilute via share issuance)
+- Use `_settleDeposit()` and `_settleRedeem()` internal functions for better coverage since they're called by both `settleDeposit()` and `settleRedeem()`
 
-**B. Physical Balance Verification (Closed State Only)**
+**B. Physical Balance Verification (During close() Only)**
 
-- When `state == Closed`: `IERC20(asset).balanceOf(vault) == totalAssets`
+- Only check balance equality during the `close()` function call itself: `IERC20(asset).balanceOf(vault) == totalAssets`
+- This check is NOT valid after `close()` completes because:
+  - Claimable redemption requests may be waiting in the vault
+  - Airdrops can occur after closure, causing DoS vulnerability
 - When `state == Open` or `Closing`: No relationship between Safe balance and totalAssets (Safe invests in strategies)
 
 **C. Solvency (Can Fulfill Claimable Redemptions)**
 
-- After `settleRedeem()`, assets are transferred from Safe to Vault and totalAssets is reduced
+- After `_settleRedeem()`, assets are transferred from Safe to Vault and totalAssets is reduced or stays equal
+- Use `_settleRedeem()` for better coverage (called by both `settleRedeem()` and `settleDeposit()`)
 - Vault balance must cover all claimable redemptions: `vaultBalance >= Σ(claimableRedeemRequest(user))`
 - When Closed, vault balance must cover all potential redemptions at fixed price
 
@@ -64,8 +69,10 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 - Use event tracking (`getLogs`) as primary verification method
 - Compare pre-tx and post-tx totalAssets values
-- Only verify vault balance equals totalAssets when state is Closed
+- Only verify vault balance equals totalAssets during `close()` function execution (not after)
 - Monitor solvency: vault balance must cover claimable redemptions
+- Note: Assertions cannot trigger on internal functions like `_settleDeposit()` and `_settleRedeem()`. Instead, trigger on the public/external functions that call them: `settleDeposit()`, `settleRedeem()`, and `close()`
+  - This allows for specific checks for the invoking functions, if needed
 
 ---
 
@@ -108,7 +115,8 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 - Management fee rate: `0 <= managementRate <= MAX_MANAGEMENT_RATE` (1000 bps = 10%)
 - Performance fee rate: `0 <= performanceRate <= MAX_PERFORMANCE_RATE` (5000 bps = 50%)
 - Protocol fee rate: `0 <= protocolRate <= MAX_PROTOCOL_RATE` (3000 bps = 30%)
-- Management fees: `managementFees = totalAssets × managementRate × timeElapsed / (BPS_DIVIDER × ONE_YEAR)`
+- Management fees (in assets): `managementFeeAssets = totalAssets × managementRate × timeElapsed / (BPS_DIVIDER × ONE_YEAR)`
+- Management fees converted to shares: `managementFeeShares = managementFeeAssets × totalSupply / (totalAssets - managementFeeAssets)`
 - Performance fees only taken when: `pricePerShare > highWaterMark`
 - Performance fees: `performanceFees = (pricePerShare - highWaterMark) × totalSupply × performanceRate / BPS_DIVIDER`
 - `highWaterMark` must be monotonically increasing (never decreases)
@@ -181,7 +189,8 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 - **Open State**: Async deposits and redeems allowed, settlements process normally
 - **Closing State**: Initiated by Owner via `initiateClosing()`, no new deposit settlements allowed, redeems still allowed
-- **Closed State**: All assets transferred from Safe to Vault (`vault.balanceOf(asset) == totalAssets`), users can synchronously redeem/withdraw at fixed price per share, no async operations
+- **Closed State**: All assets transferred from Safe to Vault, users can synchronously redeem/withdraw at fixed price per share, no async operations
+  - Note: `requestDeposit()` is still callable when Closed (users can request and cancel), but requests cannot be settled
 
 **Access Control**:
 
@@ -220,10 +229,10 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 **Invariant Rules**:
 
-- After claiming via `deposit()`: `sharesClaimed <= maxDeposit(controller)` (converted to shares)
+- After claiming via `deposit()`: `assetsClaimed <= maxDeposit(controller)`
 - After claiming via `mint()`: `sharesClaimed <= maxMint(controller)`
 - After claiming via `withdraw()`: `assetsClaimed <= maxWithdraw(controller)`
-- After claiming via `redeem()`: `assetsClaimed <= maxRedeem(controller)` (converted to assets)
+- After claiming via `redeem()`: `sharesClaimed <= maxRedeem(controller)`
 - These bounds must account for claimable requests from settled epochs
 - When paused, all max functions return 0 (no operations allowed)
 - When Closed and no claimable requests, max functions return user's share balance (synchronous redemption)
@@ -300,7 +309,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 - Use as sanity checks with tolerance for edge cases
 - Allow `>=` for airdrops/donations to Silo
-- Only exact equality for Closed state vault balance
+- Vault balance equality checks are subject to airdrops even when Closed - use with caution
 
 ### Gas Optimization
 
