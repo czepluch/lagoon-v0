@@ -1,10 +1,21 @@
-# Lagoon v0.4.0 Protocol Invariants
+# Lagoon Protocol Invariants
 
-> **Note**: These invariants are specific to **v0.4.0**. Version v0.5.0 introduces synchronous deposits and NAV expiration features that are not covered here.
+> **Coverage**: This document covers both **v0.4.0** (async-only) and **v0.5.0** (adds synchronous deposits and NAV expiration). v0.4.0-specific invariants are in sections 1-10. v0.5.0 additions are in section 11.
 
 ## Protocol Overview
 
+### v0.4.0 (Async-Only)
+
 Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a request-settle-claim pattern for deposits and redemptions. The protocol uses an epoch-based system where users request deposits/redeems, a trusted Safe settles these requests after valuation updates, and users can then claim their shares or assets.
+
+### v0.5.0 (Adds Synchronous Deposits)
+
+Version v0.5.0 adds a **synchronous deposit mode** that allows instant deposits when the NAV is fresh and valid. The vault operates in one of two mutually exclusive modes:
+
+- **Sync Mode**: When NAV is valid (not expired), users call `syncDeposit()` for instant share minting. Async `requestDeposit()` is forbidden.
+- **Async Mode**: When NAV is expired/invalid, users must use the traditional `requestDeposit()` → settle → claim flow. `syncDeposit()` is forbidden.
+
+The Safe controls mode switching via `updateTotalAssetsLifespan()` (sets NAV validity duration) and `expireTotalAssets()` (manually expires NAV). This feature is heavily used by Turtle Protocol.
 
 ### Key Components
 
@@ -27,7 +38,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ## Critical Invariants
 
-### 1. Total Assets Accounting Integrity
+### 1. Total Assets Accounting Integrity [TIER 1]
 
 **Description**: The vault's `totalAssets` is an accounting variable representing Net Asset Value (NAV), set by the valuation manager. During Open/Closing states, it does NOT equal physical balances since the Safe invests assets into external strategies (DeFi protocols, RWAs, etc.). We verify accounting consistency across settlements, not physical balance equality (except when Closed).
 
@@ -41,15 +52,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 - Fee minting increases `totalSupply` but does not directly change `totalAssets` (fees dilute via share issuance)
 - Use `_settleDeposit()` and `_settleRedeem()` internal functions for better coverage since they're called by both `settleDeposit()` and `settleRedeem()`
 
-**B. Physical Balance Verification (During close() Only)**
-
-- Only check balance equality during the `close()` function call itself: `IERC20(asset).balanceOf(vault) == totalAssets`
-- This check is NOT valid after `close()` completes because:
-  - Claimable redemption requests may be waiting in the vault
-  - Airdrops can occur after closure, causing DoS vulnerability
-- When `state == Open` or `Closing`: No relationship between Safe balance and totalAssets (Safe invests in strategies)
-
-**C. Solvency (Can Fulfill Claimable Redemptions)**
+**B. Solvency (Can Fulfill Claimable Redemptions)**
 
 - After `_settleRedeem()`, assets are transferred from Safe to Vault and totalAssets is reduced or stays equal
 - Use `_settleRedeem()` for better coverage (called by both `settleRedeem()` and `settleDeposit()`)
@@ -76,7 +79,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ---
 
-### 2. Epoch Settlement Ordering and Claimability
+### 2. Epoch Settlement Ordering and Claimability [TIER 1]
 
 **Description**: The epoch-based settlement system must maintain strict ordering and state consistency. Users can only claim from settled epochs. This is especially critical for upgrade protection - ensures logic upgrades don't introduce bugs that violate epoch mechanics.
 
@@ -106,7 +109,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ---
 
-### 3. Fee Calculation Integrity
+### 3. Fee Calculation Integrity [TIER 2]
 
 **Description**: Management and performance fees must be calculated correctly and bounded by maximum rates. Fees are taken during settlement and minted as shares (dilutes existing holders). High trust assumption - the valuation manager controls inputs to fee calculations.
 
@@ -144,7 +147,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ---
 
-### 4. Silo Balance Consistency
+### 4. Silo Balance Consistency [TIER 1]
 
 **Description**: The Silo contract is an immutable, trustless component that temporarily holds assets (for pending deposits) and shares (for pending redeems). Its balances must equal or exceed the sum of all pending requests, with tolerance for airdrops/donations.
 
@@ -175,7 +178,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ---
 
-### 5. State Transition and Access Control
+### 5. State Transition and Access Control [TIER 2]
 
 **Description**: The vault progresses through three states (Open → Closing → Closed) with strict unidirectional transitions. Critical functions must only be callable by authorized roles. Runtime checks valuable for detecting upgrade-introduced bugs.
 
@@ -223,7 +226,7 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ---
 
-### 6. ERC4626 Max Function Bounds
+### 6. ERC4626 Max Function Bounds [TIER 2]
 
 **Description**: The vault's `max*` view functions (`maxDeposit`, `maxMint`, `maxWithdraw`, `maxRedeem`) promise users the maximum amount they can claim. Users must never be able to exceed these bounds.
 
@@ -258,26 +261,26 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 ## Additional Invariants (Secondary)
 
-### 7. Share-to-Asset Conversion Rate Locking and Rounding
+### 7. Share-to-Asset Conversion Rate Locking and Rounding [TIER 2]
 
 - Conversion rates at a specific epoch must remain constant after settlement
 - `convertToShares(assets, epochId)` and `convertToAssets(shares, epochId)` must be inverse operations within 1 wei rounding
 - Rounding must favor the vault: users may receive up to 1 wei less, never more (vault keeps dust)
 - Prevents rounding exploitation for arbitrage attacks
 
-### 8. Request Uniqueness
+### 8. Request Uniqueness [TIER 2]
 
 - Users can only have one pending deposit request at a time: `pendingDepositRequest(0, user) > 0` prevents new requests
 - Users can only have one pending redeem request at a time: `pendingRedeemRequest(0, user) > 0` prevents new requests
 - Prevents accounting confusion and potential double-spending attacks
 
-### 9. Pausability
+### 9. Pausability [TIER 3]
 
 - When paused, all deposit, redeem, settlement, and request operations must revert
 - Only owner can call `pause()` and `unpause()`
 - Emergency brake to halt operations during incidents
 
-### 10. Whitelist Enforcement
+### 10. Whitelist Enforcement [TIER 3]
 
 - When `enableWhitelist == true`, only whitelisted addresses can deposit or redeem
 - Protocol fee receiver is always whitelisted (runtime check, not initialization)
@@ -303,7 +306,8 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 
 - Use `ph.getLogs()` from credible-std to track protocol events
 - More reliable than recalculating or balance checks
-- Track: `SettleDeposit`, `SettleRedeem`, `DepositRequest`, `RedeemRequest`, `HighWaterMarkUpdated`, `StateUpdated`
+- Track v0.4.0 events: `SettleDeposit`, `SettleRedeem`, `DepositRequest`, `RedeemRequest`, `HighWaterMarkUpdated`, `StateUpdated`
+- Track v0.5.0 events: `DepositSync`, `TotalAssetsLifespanUpdated` (see section 11-12 for details)
 
 ### Balance Checks (Secondary Method)
 
@@ -323,3 +327,180 @@ Lagoon v0.4.0 is an **ERC7540 asynchronous tokenized vault** that implements a r
 - Storage slot preservation verification
 - State machine integrity
 - Access control consistency
+
+---
+
+## v0.5.0 Additional Invariants
+
+> **Note**: These invariants apply only to v0.5.0, which introduces synchronous deposits and NAV expiration. These features are heavily used by Turtle Protocol. Focus on high-frequency checks (every `syncDeposit()`, every NAV validity check) rather than rare events.
+
+### 11. Synchronous Deposit Mode Integrity [TIER 1 - v0.5.0 ONLY]
+
+**Description**: v0.5.0 adds `syncDeposit()` - a synchronous deposit function that bypasses the epoch system when NAV is fresh. The vault operates in one of two mutually exclusive modes controlled by NAV validity. This is a high-frequency operation requiring robust runtime checks.
+
+**Invariant Rules**:
+
+**A. Mode Mutual Exclusivity**
+
+- When `isTotalAssetsValid() == true` (sync mode):
+  - `syncDeposit()` must succeed (if other conditions met: Open state, whitelisted, not paused)
+  - `requestDeposit()` must revert with `OnlySyncDepositAllowed`
+- When `isTotalAssetsValid() == false` (async mode):
+  - `requestDeposit()` must succeed (if other conditions met)
+  - `syncDeposit()` must revert with `OnlyAsyncDepositAllowed`
+- `isTotalAssetsValid()` returns `block.timestamp < totalAssetsExpiration`
+
+**B. Synchronous Deposit Accounting**
+
+- After `syncDeposit(assets)`:
+  - `totalAssets_new = totalAssets_old + assets`
+  - `totalSupply_new = totalSupply_old + shares_minted`
+  - Shares minted: `shares = assets × (totalSupply + 10^decimalsOffset) / (totalAssets + 1)` (current rate, not epoch-based)
+  - Assets transferred directly to Safe (NOT to Silo)
+  - Receiver balance increases by `shares`
+  - Event `DepositSync(sender, receiver, assets, shares)` emitted
+
+**C. Epoch System Isolation**
+
+- `syncDeposit()` must NOT increment `depositEpochId` (only `updateNewTotalAssets()` does)
+- `syncDeposit()` must NOT interact with Silo balances
+- `syncDeposit()` must NOT create pending requests in epoch mappings
+- Sync deposits are "instant settlement" - no request ID, no claimable amounts
+
+**D. NAV Expiration State Machine**
+
+- After `settleDeposit()` or `settleRedeem()`: `totalAssetsExpiration = block.timestamp + totalAssetsLifespan`
+- `totalAssetsLifespan` is set by Safe via `updateTotalAssetsLifespan(lifespan)`
+- Safe can manually expire NAV via `expireTotalAssets()` (sets `totalAssetsExpiration = 0`)
+- When NAV is valid, `updateNewTotalAssets()` must revert with `ValuationUpdateNotAllowed`
+- Valuation manager can only update NAV after Safe expires it (forces async mode first)
+
+**E. State and Access Control**
+
+- `syncDeposit()` requires `state == Open` (forbidden in Closing/Closed even if NAV valid)
+- `syncDeposit()` requires whitelist check (same as async flow)
+- `syncDeposit()` forbidden when paused
+- Only Safe can call `updateTotalAssetsLifespan()` and `expireTotalAssets()`
+
+**Why Critical**:
+
+- **High frequency**: `syncDeposit()` is the primary deposit path when enabled (Turtle Protocol usage)
+- **Immediate settlement**: Bypasses epoch-based pricing safety nets, direct exposure to NAV
+- **Mode confusion**: If mutual exclusivity breaks, users can arbitrage between instant and delayed pricing
+- **Accounting bypass**: Direct `totalAssets` mutation without settlement events could break accounting integrity
+- **NAV manipulation**: If expiration is bypassed, valuation manager cannot update stale prices
+
+**Attack Vectors**:
+
+- Calling both `syncDeposit()` and `requestDeposit()` in same block (arbitrage instant vs future pricing)
+- Manipulating `totalAssetsExpiration` to extend sync window indefinitely
+- Using `syncDeposit()` to increment epochs (would corrupt async settlement)
+- Bypassing `isTotalAssetsValid()` check to update NAV during sync mode
+- Sync deposits sending assets to Silo instead of Safe (accounting mismatch)
+
+**Implementation Notes**:
+
+- **High priority**: Check on every `syncDeposit()` call and every `requestDeposit()` call
+- Event tracking: `DepositSync(sender, receiver, assets, shares)` for sync deposits
+- Balance verification: Safe balance increases (not Silo) after `syncDeposit()`
+- Compare `isTotalAssetsValid()` before and after operations to detect expiration changes
+- Track `totalAssetsExpiration` and `totalAssetsLifespan` changes via `TotalAssetsLifespanUpdated` event
+- Mode checks are more critical than state transition checks (high frequency vs rare events)
+
+**Interaction with v0.4.0 Invariants**:
+
+- **Invariant 1 (Total Assets)**: Add check after `syncDeposit()` that `totalAssets` increased by `assets`
+- **Invariant 2 (Epochs)**: Verify `syncDeposit()` does NOT increment `depositEpochId`
+- **Invariant 4 (Silo)**: Verify `syncDeposit()` does NOT increase Silo asset balance
+- **Invariant 5 (State)**: `syncDeposit()` only allowed in Open state (stricter than async)
+
+---
+
+### 12. NAV Validity and Expiration Lifecycle [TIER 1 - v0.5.0 ONLY]
+
+**Description**: v0.5.0 introduces a time-based NAV expiration system that controls mode switching. The `totalAssetsExpiration` timestamp determines whether sync or async deposits are allowed. This is a frequently-checked invariant (on every deposit operation).
+
+**Invariant Rules**:
+
+**A. Expiration Timestamp Management**
+
+- After `settleDeposit()` completes: `totalAssetsExpiration = block.timestamp + totalAssetsLifespan`
+- After `settleRedeem()` completes: `totalAssetsExpiration = block.timestamp + totalAssetsLifespan`
+- `totalAssetsLifespan` defaults to 0 (async-only mode, like v0.4.0)
+- Safe can set `totalAssetsLifespan` to non-zero value (e.g., 1000 seconds) to enable sync mode after next settlement
+- Safe can call `expireTotalAssets()` to immediately set `totalAssetsExpiration = 0` (forces async mode)
+
+**B. Validity Check Consistency**
+
+- `isTotalAssetsValid()` must return `block.timestamp < totalAssetsExpiration`
+- When `totalAssetsExpiration == 0`: always returns `false` (async mode)
+- When `totalAssetsExpiration > 0` and `block.timestamp >= totalAssetsExpiration`: returns `false` (expired)
+- When `totalAssetsExpiration > block.timestamp`: returns `true` (sync mode active)
+
+**C. Access Control for NAV Updates**
+
+- When `isTotalAssetsValid() == true`: `updateNewTotalAssets()` must revert
+- When `isTotalAssetsValid() == false`: `updateNewTotalAssets()` allowed (if called by valuationManager)
+- Safe must call `expireTotalAssets()` before valuation manager can update NAV during sync window
+- This prevents NAV updates while users are doing instant sync deposits at current rate
+
+**D. Event Tracking**
+
+- `TotalAssetsLifespanUpdated(oldLifespan, newLifespan)` emitted when Safe changes lifespan
+- `TotalAssetsUpdated(newTotalAssets)` emitted when NAV is updated and expiration is set
+
+**Why Critical**:
+
+- **High frequency**: Mode checks happen on every deposit operation
+- **Security boundary**: Prevents NAV updates during sync deposit window (manipulation risk)
+- **Mode switching**: Expiration state determines which deposit functions are available
+- If checks fail, users could be locked out of deposits or use wrong deposit method
+
+**Attack Vectors**:
+
+- Updating NAV while `isTotalAssetsValid() == true` (breaks sync deposit pricing)
+- Preventing NAV expiration to block async settlements indefinitely
+- Manipulating block.timestamp comparisons to bypass validity checks
+
+**Implementation Notes**:
+
+- **High priority**: Check `isTotalAssetsValid()` result matches expected mode before deposit operations
+- Verify `totalAssetsExpiration` is set correctly after settlements (if `totalAssetsLifespan > 0`)
+- Track Safe's calls to `updateTotalAssetsLifespan()` and `expireTotalAssets()`
+- Less critical: Deep validation of expiration math (trusted Safe controls this)
+- Focus on: mode enforcement (sync/async mutual exclusivity) rather than timestamp arithmetic
+
+---
+
+## v0.5.0 Implementation Guidelines
+
+### High-Frequency Checks (Priority)
+
+These checks trigger on every deposit operation and should be optimized:
+
+1. **Mode mutual exclusivity**: Before `syncDeposit()` or `requestDeposit()`, verify only one is allowed based on `isTotalAssetsValid()`
+2. **Sync deposit accounting**: After `syncDeposit()`, verify `totalAssets` increased and Safe balance increased (not Silo)
+3. **Epoch isolation**: After `syncDeposit()`, verify `depositEpochId` did NOT change
+4. **NAV validity check**: Verify `isTotalAssetsValid()` returns correct boolean based on `block.timestamp < totalAssetsExpiration`
+
+### Medium-Frequency Checks
+
+These checks trigger during settlements and Safe operations:
+
+1. **NAV expiration update**: After settlements, verify `totalAssetsExpiration` is set correctly if `totalAssetsLifespan > 0`
+2. **Lifespan updates**: Track `TotalAssetsLifespanUpdated` events from Safe
+3. **Manual expiration**: Track Safe's `expireTotalAssets()` calls
+
+### Low-Frequency Checks (Lower Priority)
+
+These are rare or can be covered by other checks:
+
+1. State transition checks during sync deposits (already covered by high-frequency mode checks)
+2. Deep validation of timestamp arithmetic (trusted Safe controls)
+
+### Event Tracking for v0.5.0
+
+Add to event tracking list:
+
+- `DepositSync(sender, receiver, assets, shares)` - every sync deposit
+- `TotalAssetsLifespanUpdated(oldLifespan, newLifespan)` - Safe configuration changes
