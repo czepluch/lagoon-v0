@@ -60,13 +60,6 @@ If every transaction maintains consistency, the global invariant holds by induct
 
 **Why Critical**: Accounting mismatches compound over time, breaking share pricing. Insolvency means users cannot claim assets they're entitled to.
 
-**Attack Vectors**:
-
-- Settlement math errors accumulating across epochs
-- Safe withdrawing vault balance below claimable redemptions (insolvency)
-- Upgrade bugs corrupting totalAssets storage
-- v0.5.0: syncDeposit() bypassing accounting validation
-
 **Implementation Notes**:
 
 - Use event tracking (`getLogs`) as primary verification method
@@ -93,14 +86,6 @@ If every transaction maintains consistency, the global invariant holds by induct
 - **v0.5.0 specific**: `syncDeposit()` must NOT increment `depositEpochId` (only `updateNewTotalAssets()` does)
 
 **Why Critical**: Epoch ordering violations allow users to claim assets/shares at incorrect conversion rates, enabling front-running attacks where users can choose favorable pricing by timing their claims. Double-claiming via epoch manipulation.
-
-**Attack Vectors**:
-
-- Claiming from unsettled epochs at stale prices
-- Double-claiming by manipulating epoch counters
-- Settlement order manipulation to cherry-pick favorable conversion rates
-- Upgrade bugs that break epoch incrementing logic
-- v0.5.0: syncDeposit() incorrectly incrementing epochs
 
 **Implementation Notes**:
 
@@ -129,13 +114,6 @@ If every transaction maintains consistency, the global invariant holds by induct
 - **v0.5.0 specific**: `syncDeposit()` must NOT interact with Silo balances (assets go directly to Safe)
 
 **Why Critical**: Silo accounting mismatches allow users to withdraw more than they deposited or claim shares they didn't pay for. The Silo is the staging area where user funds are vulnerable before settlement.
-
-**Attack Vectors**:
-
-- Claiming assets from Silo without corresponding request
-- Double-spending by requesting, settling, then requesting again without claiming
-- Canceling requests after epoch changes to get assets back while keeping shares
-- v0.5.0: syncDeposit() incorrectly routing assets to Silo instead of Safe
 
 **Implementation Notes**:
 
@@ -199,21 +177,7 @@ If every transaction maintains consistency, the global invariant holds by induct
 - `syncDeposit()` forbidden when paused
 - Only Safe can call `updateTotalAssetsLifespan()` and `expireTotalAssets()`
 
-**Why Critical**:
-
-- **High frequency**: `syncDeposit()` is the primary deposit path when enabled (Turtle Protocol usage)
-- **Immediate settlement**: Bypasses epoch-based pricing safety nets, direct exposure to NAV
-- **Mode confusion**: If mutual exclusivity breaks, users can arbitrage between instant and delayed pricing
-- **Accounting bypass**: Direct `totalAssets` mutation without settlement events could break accounting integrity
-- **NAV manipulation**: If expiration is bypassed, valuation manager cannot update stale prices
-
-**Attack Vectors**:
-
-- Calling both `syncDeposit()` and `requestDeposit()` in same block (arbitrage instant vs future pricing)
-- Manipulating `totalAssetsExpiration` to extend sync window indefinitely
-- Using `syncDeposit()` to increment epochs (would corrupt async settlement)
-- Bypassing `isTotalAssetsValid()` check to update NAV during sync mode
-- Sync deposits sending assets to Silo instead of Safe (accounting mismatch)
+**Why Critical**: High-frequency operation that bypasses epoch-based pricing safety nets. Mode confusion could enable arbitrage between instant and delayed pricing. Direct `totalAssets` mutation requires careful verification.
 
 **Implementation Notes**:
 
@@ -268,18 +232,7 @@ If every transaction maintains consistency, the global invariant holds by induct
 - `TotalAssetsLifespanUpdated(oldLifespan, newLifespan)` emitted when Safe changes lifespan
 - `TotalAssetsUpdated(newTotalAssets)` emitted when NAV is updated and expiration is set
 
-**Why Critical**:
-
-- **High frequency**: Mode checks happen on every deposit operation
-- **Security boundary**: Prevents NAV updates during sync deposit window (manipulation risk)
-- **Mode switching**: Expiration state determines which deposit functions are available
-- If checks fail, users could be locked out of deposits or use wrong deposit method
-
-**Attack Vectors**:
-
-- Updating NAV while `isTotalAssetsValid() == true` (breaks sync deposit pricing)
-- Preventing NAV expiration to block async settlements indefinitely
-- Manipulating block.timestamp comparisons to bypass validity checks
+**Why Critical**: Mode checks happen on every deposit operation. Expiration state determines which deposit functions are available and prevents NAV updates during sync deposit window.
 
 **Implementation Notes**:
 
