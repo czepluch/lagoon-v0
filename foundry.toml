@@ -42,4 +42,20 @@ unknown_chain = { key = "${ETHERSCAN_API_KEY}" }
 plasma = { key = "${ETHERSCAN_API_KEY}", chain = 9745, url = "https://api.etherscan.io/v2/api?chainid=9745" }
 
 
+[profile.assertions]
+src = "assertions/src"
+test = "assertions/test"
+out = "out"
+libs = ["lib", "dependencies"]
+cache = true
+cache_path = 'cache'
+ffi = true
+ast = true
+build_info = true
+extra_output = ["storageLayout"]
+optimizer = true
+optimizer_runs = 1
+solc_version = "0.8.26"
+evm_version = 'cancun'
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
