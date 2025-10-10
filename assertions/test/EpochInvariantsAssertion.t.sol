@@ -401,3 +401,6 @@ contract TestEpochInvariantsAssertion is AssertionBaseTest {
 /// The settlement logic computes lastDepositEpochIdSettled = depositEpochId - 2 and
 /// lastRedeemEpochIdSettled = redeemEpochId - 2, which mathematically guarantees the
 /// invariant holds. Any violation would require a fundamental Solidity arithmetic bug.
+
+/// @dev NOTE: Sync deposit isolation tests (Invariant #2.4 for v0.5.0) are in
+/// TotalAssetsAccountingAssertion_v0.5.0.t.sol since they require v0.5.0 vault setup.

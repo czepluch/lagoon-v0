@@ -8,10 +8,11 @@ interface IVault {
     function updateNewTotalAssets(uint256 newTotalAssets) external;
     function settleDeposit(uint256 totalAssets) external;
     function settleRedeem(uint256 totalAssets) external;
+    function syncDeposit(uint256 assets, address receiver, address referral) external payable returns (uint256 shares);
 }
 
 /// @title EpochInvariantsAssertion
-/// @notice Validates epoch management invariants for the Lagoon v0.4.0 ERC7540 vault
+/// @notice Validates epoch management invariants for the Lagoon v0.4.0 & v0.5.0 ERC7540 vault
 ///
 /// @dev INVARIANT #2: EPOCH SETTLEMENT ORDERING AND CLAIMABILITY
 ///
@@ -44,10 +45,16 @@ interface IVault {
 ///     WHY: Incrementing by 1 breaks parity. Incrementing by >2 skips epochs, potentially
 ///     orphaning user requests in the skipped epochs, making their funds unclaimable.
 ///
+/// 2.4 SYNC DEPOSIT ISOLATION (v0.5.0 only)
+///     syncDeposit() must NOT increment depositEpochId
+///
+///     WHY: syncDeposit() bypasses the epoch system for instant settlement. If it increments
+///     epochs, it corrupts the async request/settlement accounting.
+///
 /// These invariants together ensure users can always claim their funds and prevent
 /// temporal inconsistencies in the vault's async request processing.
 ///
-/// @dev Contains three separate assertion functions for parallel execution
+/// @dev Contains four separate assertion functions for parallel execution
 contract EpochInvariantsAssertion is Assertion {
     /// @notice ERC7540 storage location from the vault contract
     bytes32 private constant ERC7540_STORAGE_LOCATION =
@@ -59,6 +66,7 @@ contract EpochInvariantsAssertion is Assertion {
         registerCallTrigger(this.assertionSettlementOrdering.selector, IVault.settleDeposit.selector);
         registerCallTrigger(this.assertionSettlementOrdering.selector, IVault.settleRedeem.selector);
         registerCallTrigger(this.assertionEpochIncrements.selector, IVault.updateNewTotalAssets.selector);
+        registerCallTrigger(this.assertionSyncDepositIsolation.selector, IVault.syncDeposit.selector);
     }
 
     /// @notice Invariant #2.1: Epoch Parity
@@ -133,6 +141,36 @@ contract EpochInvariantsAssertion is Assertion {
         require(
             redeemIncrement == 0 || redeemIncrement == 2,
             "Epoch increment violation: redeem epoch must increment by 0 or 2"
+        );
+    }
+
+    /// @notice Invariant #2.4: Sync Deposit Isolation (v0.5.0)
+    /// @dev Verifies syncDeposit() does NOT increment depositEpochId
+    /// @dev syncDeposit() is instant settlement - should not interact with async epoch system
+    function assertionSyncDepositIsolation() external {
+        address vaultAddress = ph.getAssertionAdopter();
+        bytes32 epochSlot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + 2);
+
+        ph.forkPreTx();
+        bytes32 preEpochData = ph.load(vaultAddress, epochSlot);
+        uint40 preDepositEpochId = uint40(uint256(preEpochData));
+        uint40 preRedeemEpochId = uint40(uint256(preEpochData) >> 120);
+
+        ph.forkPostTx();
+        bytes32 postEpochData = ph.load(vaultAddress, epochSlot);
+        uint40 postDepositEpochId = uint40(uint256(postEpochData));
+        uint40 postRedeemEpochId = uint40(uint256(postEpochData) >> 120);
+
+        // Verify depositEpochId did NOT change
+        require(
+            preDepositEpochId == postDepositEpochId,
+            "Sync deposit isolation violation: syncDeposit changed depositEpochId"
+        );
+
+        // Verify redeemEpochId did NOT change
+        require(
+            preRedeemEpochId == postRedeemEpochId,
+            "Sync deposit isolation violation: syncDeposit changed redeemEpochId"
         );
     }
 }

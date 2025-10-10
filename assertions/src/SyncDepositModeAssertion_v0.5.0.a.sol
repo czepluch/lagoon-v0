@@ -154,13 +154,10 @@ contract SyncDepositModeAssertion_v0_5_0 is Assertion {
             "Accounting violation: Safe balance mismatch"
         );
 
-        // TODO: This assertion assumes syncDeposit is the only function affecting totalAssets/totalSupply in the
-        // transaction.
-        // If claimSharesAndRequestRedeem() is called in the same batch as syncDeposit(), this assertion will
-        // false-positive
-        // because claimSharesAndRequestRedeem() also mints shares via _deposit(). Consider expanding this assertion to
-        // handle
-        // batched calls with claimSharesAndRequestRedeem() if the team believes this scenario is realistic.
+        // Limitation: This assertion assumes syncDeposit is the only function affecting totalAssets/totalSupply
+        // in the transaction. Batched calls with claimSharesAndRequestRedeem() may cause false positives
+        // since that function also mints shares via _deposit().
+        // TODO: Expand this assertion to handle all calls that could affect totalAssets/totalSupply
     }
 
     /// @notice Invariant 4.C: Epoch System Isolation

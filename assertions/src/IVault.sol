@@ -27,6 +27,17 @@ interface IVault {
     /// @return requestId The ID of the deposit request
     function requestDeposit(uint256 assets, address controller, address owner) external returns (uint256 requestId);
 
+    /// @notice Request an asynchronous redemption
+    /// @param shares Amount of shares to redeem
+    /// @param controller Address that will control the redemption
+    /// @param owner Address that owns the shares
+    /// @return requestId The ID of the redeem request
+    function requestRedeem(uint256 shares, address controller, address owner) external returns (uint256 requestId);
+
+    /// @notice Cancel a pending deposit request
+    /// @return assets Amount of assets refunded
+    function cancelRequestDeposit() external returns (uint256 assets);
+
     // ============ v0.5.0 Specific Functions ============
 
     /// @notice Perform a synchronous deposit (v0.5.0 only)
@@ -47,6 +58,13 @@ interface IVault {
     /// @notice Get the lifespan duration for total assets validity
     /// @return lifespan Duration in seconds that total assets remains valid
     function totalAssetsLifespan() external view returns (uint256 lifespan);
+
+    /// @notice Update the lifespan for NAV validity (v0.5.0 only)
+    /// @param newLifespan New lifespan duration in seconds
+    function updateTotalAssetsLifespan(uint128 newLifespan) external;
+
+    /// @notice Manually expire the NAV (v0.5.0 only)
+    function expireTotalAssets() external;
 
     // ============ State Query Functions ============
 
@@ -94,4 +112,5 @@ interface IVault {
     /// @notice Get the underlying asset address
     /// @return asset Address of the underlying asset token
     function asset() external view returns (address asset);
+
 }
