@@ -1,30 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {CredibleTest} from "credible-std/CredibleTest.sol";
-import {Test} from "forge-std/Test.sol";
-import {SyncDepositModeAssertion_v0_5_0} from "../src/SyncDepositModeAssertion_v0.5.0.a.sol";
-import {IVault} from "../src/IVault.sol";
+import {IVault} from "../../../src/IVault.sol";
+import {SyncDepositModeAssertion_v0_5_0} from "../../../src/SyncDepositModeAssertion_v0.5.0.a.sol";
+import {MockERC20, MockTestBase} from "../../MockTestBase.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-
-/// @title Mock ERC20 for testing
-contract MockERC20 is ERC20 {
-    uint8 private _decimals;
-
-    constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
-        _decimals = decimals_;
-    }
-
-    function decimals() public view virtual override returns (uint8) {
-        return _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
 
 /// @title Standalone Mock Vault for Sync Deposit Mode Testing
 /// @notice Minimal vault implementation with configurable buggy sync deposit behavior
@@ -34,34 +16,47 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
         0x5c74d456014b1c0eb4368d944667a568313858a3029a650ff0cb7b56f8b57a00;
 
     struct ERC7540Storage {
-        uint256 totalAssets;
-        uint256 newTotalAssets;
-        uint40 depositEpochId;
-        uint40 redeemEpochId;
+        uint256 totalAssets; // slot 0
+        uint256 newTotalAssets; // slot 1
+        uint40 depositEpochId; // slot 2 (packed)
+        uint40 depositSettleId; // slot 2 (packed)
+        uint40 lastDepositEpochIdSettled; // slot 2 (packed)
+        uint40 redeemEpochId; // slot 3 (packed)
+        uint40 redeemSettleId; // slot 3 (packed)
+        uint40 lastRedeemEpochIdSettled; // slot 3 (packed)
+        // Mappings take 1 slot marker each but data is elsewhere
+        mapping(uint40 => bytes32) epochs; // slot 4 (simplified from EpochData)
+        mapping(uint40 => bytes32) settles; // slot 5 (simplified from SettleData)
+        mapping(address => uint40) lastDepositRequestId; // slot 6
+        mapping(address => uint40) lastRedeemRequestId; // slot 7
+        mapping(address => mapping(address => bool)) isOperator; // slot 8
+        address pendingSilo; // slot 9 BUT ACTUALLY SLOT 8 (mappings don't consume slots)
+        address wrappedNativeToken; // next slot
+        uint8 decimals;
+        uint8 decimalsOffset;
         uint128 totalAssetsExpiration;
         uint128 totalAssetsLifespan;
     }
 
     address public immutable asset;
     address public immutable safe;
-    address public immutable pendingSilo;
 
     // Flags to control buggy behavior
-    bool public shouldAllowSyncWhenExpired;      // Violates 4.A
-    bool public shouldAllowRequestWhenValid;     // Violates 4.A
-    bool public shouldBreakTotalAssets;          // Violates 4.B
-    bool public shouldBreakSafeBalance;          // Violates 4.B
-    bool public shouldBreakSharesMinted;         // Violates 4.B
-    bool public shouldIncrementDepositEpoch;     // Violates 4.C
-    bool public shouldAffectSilo;                // Violates 4.C
-    bool public shouldSkipExpirationUpdate;      // Violates 4.D
+    bool public shouldAllowSyncWhenExpired; // Violates 4.A
+    bool public shouldAllowRequestWhenValid; // Violates 4.A
+    bool public shouldBreakTotalAssets; // Violates 4.B
+    bool public shouldBreakSafeBalance; // Violates 4.B
+    bool public shouldBreakSharesMinted; // Violates 4.B
+    bool public shouldIncrementDepositEpoch; // Violates 4.C
+    bool public shouldAffectSilo; // Violates 4.C
+    bool public shouldSkipExpirationUpdate; // Violates 4.D
 
     constructor(address _asset, address _safe, address _pendingSilo) ERC20("Mock Vault Sync", "mVaultSync") {
         asset = _asset;
         safe = _safe;
-        pendingSilo = _pendingSilo;
 
         ERC7540Storage storage $ = _getERC7540Storage();
+        $.pendingSilo = _pendingSilo;
         $.depositEpochId = 1;
         $.redeemEpochId = 2;
         $.totalAssetsLifespan = 1000; // Default 1000 seconds
@@ -111,7 +106,11 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
     // ============ Core Vault Functions ============
 
     /// @notice Synchronous deposit with configurable buggy behavior
-    function syncDeposit(uint256 assets, address receiver, address /* referral */) external payable returns (uint256 shares) {
+    function syncDeposit(
+        uint256 assets,
+        address receiver,
+        address /* referral */
+    ) external payable returns (uint256 shares) {
         // Check NAV validity (unless buggy flag is set)
         if (!shouldAllowSyncWhenExpired) {
             require(isTotalAssetsValid(), "NAV expired");
@@ -131,7 +130,7 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
 
         // If shouldBreakSafeBalance, send some assets to pendingSilo instead
         if (shouldBreakSafeBalance) {
-            IERC20(asset).transferFrom(safe, pendingSilo, assets / 4);
+            IERC20(asset).transferFrom(safe, $.pendingSilo, assets / 4);
         }
 
         // Calculate shares using proper ERC4626 formula with decimals offset
@@ -140,15 +139,13 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
 
         if (shouldBreakSharesMinted) {
             // Wrong: mint double the correct amount
-            uint256 correctShares = (supply == 0)
-                ? assets * decimalsOffset
-                : (assets * (supply + decimalsOffset)) / ($.totalAssets + 1);
+            uint256 correctShares =
+                (supply == 0) ? assets * decimalsOffset : (assets * (supply + decimalsOffset)) / ($.totalAssets + 1);
             shares = correctShares * 2;
         } else {
             // Correct: ERC4626 formula with decimals offset
-            shares = (supply == 0)
-                ? assets * decimalsOffset
-                : (assets * (supply + decimalsOffset)) / ($.totalAssets + 1);
+            shares =
+                (supply == 0) ? assets * decimalsOffset : (assets * (supply + decimalsOffset)) / ($.totalAssets + 1);
         }
 
         // Mint shares
@@ -161,27 +158,35 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
 
         // Affect Silo if flag is set
         if (shouldAffectSilo) {
-            IERC20(asset).transferFrom(safe, pendingSilo, 1); // Send 1 wei to Silo
+            IERC20(asset).transferFrom(safe, $.pendingSilo, 1); // Send 1 wei to Silo
         }
 
         return shares;
     }
 
     /// @notice Request deposit with configurable buggy behavior
-    function requestDeposit(uint256 assets, address /* controller */, address /* owner */) external returns (uint256) {
+    function requestDeposit(
+        uint256 assets,
+        address, /* controller */
+        address /* owner */
+    ) external returns (uint256) {
         // Check NAV validity (unless buggy flag is set)
         if (!shouldAllowRequestWhenValid) {
             require(!isTotalAssetsValid(), "NAV valid, use syncDeposit");
         }
 
+        ERC7540Storage storage $ = _getERC7540Storage();
+
         // Transfer assets to pending silo
-        IERC20(asset).transferFrom(msg.sender, pendingSilo, assets);
+        IERC20(asset).transferFrom(msg.sender, $.pendingSilo, assets);
 
         return 1; // Return dummy request ID
     }
 
     /// @notice Settle deposit with configurable expiration update
-    function settleDeposit(uint256 /* totalAssets */) external {
+    function settleDeposit(
+        uint256 /* totalAssets */
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
 
         // Update expiration (buggy or correct)
@@ -192,7 +197,9 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
     }
 
     /// @notice Settle redeem with configurable expiration update
-    function settleRedeem(uint256 /* totalAssets */) external {
+    function settleRedeem(
+        uint256 /* totalAssets */
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
 
         // Update expiration (buggy or correct)
@@ -241,7 +248,9 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
         return 0; // Not used in sync deposit tests
     }
 
-    function updateNewTotalAssets(uint256) external {
+    function updateNewTotalAssets(
+        uint256
+    ) external {
         // Stub for interface compliance
     }
 
@@ -252,7 +261,9 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
     }
 
     /// @notice Manually set lifespan for testing
-    function setLifespan(uint128 lifespan) external {
+    function setLifespan(
+        uint128 lifespan
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
         $.totalAssetsLifespan = lifespan;
     }
@@ -261,7 +272,7 @@ contract StandaloneMockVaultSyncDeposit is ERC20 {
 /// @title SyncDepositModeAssertion Failure Tests
 /// @notice Tests that sync deposit mode assertions correctly catch violations
 /// @dev Tests Invariant #4 (Synchronous Deposit Mode Integrity)
-contract TestSyncDepositModeAssertionMock is CredibleTest, Test {
+contract TestSyncDepositModeAssertionMock is MockTestBase {
     StandaloneMockVaultSyncDeposit public mockVault;
     MockERC20 public mockAsset;
     address public safe;

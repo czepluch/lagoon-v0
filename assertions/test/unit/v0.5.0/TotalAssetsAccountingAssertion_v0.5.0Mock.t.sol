@@ -1,29 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {CredibleTest} from "credible-std/CredibleTest.sol";
-import {Test} from "forge-std/Test.sol";
-import {TotalAssetsAccountingAssertion_v0_5_0} from "../src/TotalAssetsAccountingAssertion_v0.5.0.a.sol";
-import {IVault} from "../src/IVault.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IVault} from "../../../src/IVault.sol";
+import {TotalAssetsAccountingAssertion_v0_5_0} from "../../../src/TotalAssetsAccountingAssertion_v0.5.0.a.sol";
+import {MockERC20, MockTestBase} from "../../MockTestBase.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-
-/// @title Mock ERC20 for testing
-contract MockERC20 is ERC20 {
-    uint8 private _decimals;
-
-    constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
-        _decimals = decimals_;
-    }
-
-    function decimals() public view virtual override returns (uint8) {
-        return _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Standalone Mock Vault for Total Assets Accounting Testing
 /// @notice Minimal vault implementation with configurable buggy settlement behavior
@@ -53,14 +35,14 @@ contract StandaloneMockVaultTotalAssetsAccounting is ERC20 {
     address public immutable pendingSilo;
 
     // Flags to control buggy behavior
-    bool public shouldSkipTotalAssetsIncrease;        // Violates 1.A (deposit)
-    bool public shouldDoublePendingAssets;            // Violates 1.A (deposit)
-    bool public shouldSkipTotalAssetsDecrease;        // Violates 1.A (redeem)
-    bool public shouldDoubleAssetsWithdrawn;          // Violates 1.A (redeem)
-    bool public shouldSkipVaultTransfer;              // Violates 1.B (solvency)
-    bool public shouldTransferWrongAmount;            // Violates 1.B (solvency)
-    bool public shouldSkipSyncTotalAssetsIncrease;    // Violates 1.A (syncDeposit)
-    bool public shouldRouteSyncToSilo;                // Violates 1.A (syncDeposit routing)
+    bool public shouldSkipTotalAssetsIncrease; // Violates 1.A (deposit)
+    bool public shouldDoublePendingAssets; // Violates 1.A (deposit)
+    bool public shouldSkipTotalAssetsDecrease; // Violates 1.A (redeem)
+    bool public shouldDoubleAssetsWithdrawn; // Violates 1.A (redeem)
+    bool public shouldSkipVaultTransfer; // Violates 1.B (solvency)
+    bool public shouldTransferWrongAmount; // Violates 1.B (solvency)
+    bool public shouldSkipSyncTotalAssetsIncrease; // Violates 1.A (syncDeposit)
+    bool public shouldRouteSyncToSilo; // Violates 1.A (syncDeposit routing)
 
     // Events matching v0.5.0
     event SettleDeposit(
@@ -159,7 +141,9 @@ contract StandaloneMockVaultTotalAssetsAccounting is ERC20 {
 
     /// @notice Mock settleDeposit with configurable violations
     /// @dev Simulates _updateTotalAssetsAndTakeFees + _settleDeposit behavior
-    function settleDeposit(uint256 newTotalAssets) external {
+    function settleDeposit(
+        uint256 newTotalAssets
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
 
         // 1. NAV Update (emits TotalAssetsUpdated)
@@ -186,19 +170,14 @@ contract StandaloneMockVaultTotalAssetsAccounting is ERC20 {
         uint256 _totalSupply = totalSupply();
         $.depositSettleId++;
 
-        emit SettleDeposit(
-            $.depositEpochId,
-            $.depositSettleId,
-            $.totalAssets,
-            _totalSupply,
-            pendingAssets,
-            shares
-        );
+        emit SettleDeposit($.depositEpochId, $.depositSettleId, $.totalAssets, _totalSupply, pendingAssets, shares);
     }
 
     /// @notice Mock settleRedeem with configurable violations
     /// @dev Simulates _updateTotalAssetsAndTakeFees + _settleRedeem behavior
-    function settleRedeem(uint256 newTotalAssets) external {
+    function settleRedeem(
+        uint256 newTotalAssets
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
 
         // 1. NAV Update (emits TotalAssetsUpdated)
@@ -238,12 +217,7 @@ contract StandaloneMockVaultTotalAssetsAccounting is ERC20 {
         $.redeemSettleId++;
 
         emit SettleRedeem(
-            $.redeemEpochId,
-            $.redeemSettleId,
-            $.totalAssets,
-            _totalSupply,
-            assetsWithdrawn,
-            pendingShares
+            $.redeemEpochId, $.redeemSettleId, $.totalAssets, _totalSupply, assetsWithdrawn, pendingShares
         );
     }
 
@@ -273,22 +247,28 @@ contract StandaloneMockVaultTotalAssetsAccounting is ERC20 {
 
     // ============ Test Helpers ============
 
-    function setupDeposit(uint256 amount) external {
+    function setupDeposit(
+        uint256 amount
+    ) external {
         MockERC20(asset).mint(pendingSilo, amount);
     }
 
-    function setupRedeem(uint256 shares) external {
+    function setupRedeem(
+        uint256 shares
+    ) external {
         _mint(pendingSilo, shares);
     }
 
-    function setTotalAssets(uint256 amount) external {
+    function setTotalAssets(
+        uint256 amount
+    ) external {
         _getERC7540Storage().totalAssets = amount;
     }
 }
 
 /// @title Mock Tests for Total Assets Accounting Assertion
 /// @notice Tests violation scenarios using StandaloneMockVaultTotalAssetsAccounting
-contract TestTotalAssetsAccountingAssertionMock is CredibleTest, Test {
+contract TestTotalAssetsAccountingAssertionMock is MockTestBase {
     StandaloneMockVaultTotalAssetsAccounting public vault;
     MockERC20 public mockAsset;
     address public safe;

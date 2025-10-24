@@ -1,176 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {SiloBalanceConsistencyAssertion} from "../src/SiloBalanceConsistencyAssertion.a.sol";
-import {CredibleTest} from "credible-std/CredibleTest.sol";
-import {Test} from "forge-std/Test.sol";
-import {VmSafe} from "forge-std/Vm.sol";
-
-import {VaultHelper} from "@test/v0.5.0/VaultHelper.sol";
-import {FeeRegistry} from "@src/protocol-v1/FeeRegistry.sol";
-import {BeaconProxyFactory, InitStruct as BeaconProxyInitStruct} from "@src/protocol-v1/BeaconProxyFactory.sol";
-
-import {IERC20Metadata, IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-
-using SafeERC20 for IERC20;
-using Math for uint256;
-
-/// @title MockERC20
-/// @notice Simple mock ERC20 token for testing
-contract MockERC20 is ERC20 {
-    uint8 private _decimals;
-
-    constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
-        _decimals = decimals_;
-    }
-
-    function decimals() public view virtual override returns (uint8) {
-        return _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
-
-/// @title MockWETH
-/// @notice Simple mock WETH for testing
-contract MockWETH is MockERC20 {
-    constructor() MockERC20("Wrapped Ether", "WETH", 18) {}
-
-    receive() external payable {
-        _mint(msg.sender, msg.value);
-    }
-
-    function deposit() external payable {
-        _mint(msg.sender, msg.value);
-    }
-
-    function withdraw(uint256 amount) external {
-        _burn(msg.sender, amount);
-        payable(msg.sender).transfer(amount);
-    }
-}
+import {SiloBalanceConsistencyAssertion} from "../../../src/SiloBalanceConsistencyAssertion.a.sol";
+import {AssertionBaseTest_v0_5_0} from "../../AssertionBaseTest_v0_5_0.sol";
 
 /// @title TestSiloBalanceConsistency
 /// @notice Tests Invariant #3: Silo Balance Consistency for v0.5.0
 /// @dev Tests cover:
 ///      - 3.A: Asset Balance Consistency (requestDeposit, settleDeposit, cancelRequestDeposit, syncDeposit)
 ///      - 3.B: Share Balance Consistency (requestRedeem, settleRedeem)
-contract TestSiloBalanceConsistency is CredibleTest, Test {
-    // ============ Mock Tokens ============
-    MockERC20 public mockAsset;
-    MockWETH public mockWETH;
-
-    // ============ Protocol Contracts ============
-    VaultHelper public vault;
-    FeeRegistry public feeRegistry;
-    BeaconProxyFactory public factory;
-
-    // ============ Configuration ============
-    bool proxy = false;
-    uint8 decimalsOffset = 0;
-    string vaultName = "Test Vault v0.5.0";
-    string vaultSymbol = "TVAULT5";
-    uint256 rateUpdateCooldown = 1 days;
-    address[] whitelistInit = new address[](0);
-    bool enableWhitelist = true;
-
-    // ============ Test Users ============
-    VmSafe.Wallet public user1 = vm.createWallet("user1");
-    VmSafe.Wallet public user2 = vm.createWallet("user2");
-    VmSafe.Wallet public user3 = vm.createWallet("user3");
-
-    VmSafe.Wallet public owner = vm.createWallet("owner");
-    VmSafe.Wallet public safe = vm.createWallet("safe");
-    VmSafe.Wallet public valuationManager = vm.createWallet("valuationManager");
-    VmSafe.Wallet public admin = vm.createWallet("admin");
-    VmSafe.Wallet public feeReceiver = vm.createWallet("feeReceiver");
-    VmSafe.Wallet public dao = vm.createWallet("dao");
-    VmSafe.Wallet public whitelistManager = vm.createWallet("whitelistManager");
-
+contract TestSiloBalanceConsistency is AssertionBaseTest_v0_5_0 {
     function setUp() public {
-        // Deploy mock tokens
-        mockAsset = new MockERC20("Mock USDC", "USDC", 6);
-        mockWETH = new MockWETH();
-
-        // Initialize fee registry
-        feeRegistry = new FeeRegistry(false);
-        feeRegistry.initialize(dao.addr, dao.addr);
-
-        // Deploy vault implementation
-        bool disableImplementationInit = proxy;
-        address implementation = address(new VaultHelper(disableImplementationInit));
-
-        // Deploy factory
-        factory = new BeaconProxyFactory(address(feeRegistry), implementation, dao.addr, address(mockWETH));
-
-        // Prepare initialization struct with zero fees for simplicity
-        BeaconProxyInitStruct memory initStruct = BeaconProxyInitStruct({
-            underlying: address(mockAsset),
-            name: vaultName,
-            symbol: vaultSymbol,
-            safe: safe.addr,
-            whitelistManager: whitelistManager.addr,
-            valuationManager: valuationManager.addr,
-            admin: admin.addr,
-            feeReceiver: feeReceiver.addr,
-            managementRate: 0,
-            performanceRate: 0,
-            rateUpdateCooldown: rateUpdateCooldown,
-            enableWhitelist: enableWhitelist
-        });
-
-        // Deploy vault (direct deployment for simplicity)
-        vault = VaultHelper(implementation);
-        vault.initialize(abi.encode(initStruct), address(feeRegistry), address(mockWETH));
-
-        // Whitelist essential addresses
-        if (enableWhitelist) {
-            whitelistInit.push(feeReceiver.addr);
-            whitelistInit.push(dao.addr);
-            whitelistInit.push(safe.addr);
-            whitelistInit.push(vault.pendingSilo());
-            whitelistInit.push(address(feeRegistry));
-            vm.prank(whitelistManager.addr);
-            vault.addToWhitelist(whitelistInit);
-        }
-
-        // Label contracts for better trace output
-        vm.label(address(vault), vaultName);
-        vm.label(vault.pendingSilo(), "vault.pendingSilo");
-        vm.label(address(mockAsset), "MockUSDC");
-        vm.label(address(mockWETH), "MockWETH");
-    }
-
-    // ============ Helper Functions ============
-
-    function dealAndApproveAndWhitelist(address user) internal {
-        mockAsset.mint(user, 100_000e6); // 100k USDC
-        vm.prank(user);
-        IERC20(address(mockAsset)).approve(address(vault), type(uint256).max);
-        deal(user, 100 ether); // Gas
-
-        address[] memory usersArray = new address[](1);
-        usersArray[0] = user;
-        vm.prank(whitelistManager.addr);
-        vault.addToWhitelist(usersArray);
-    }
-
-    function dealAndApproveSharesAndWhitelist(address user, uint256 shares) internal {
-        // Mint shares to user (assuming they were deposited earlier)
-        deal(address(vault), user, shares);
-        vm.prank(user);
-        vault.approve(address(vault), type(uint256).max);
-        deal(user, 100 ether); // Gas
-
-        address[] memory usersArray = new address[](1);
-        usersArray[0] = user;
-        vm.prank(whitelistManager.addr);
-        vault.addToWhitelist(usersArray);
+        setUpVault(0, 0, 6); // Zero fees, 6 decimals (USDC)
     }
 
     // ==================== Invariant 3.A: Asset Balance Consistency Tests ====================
@@ -393,9 +234,7 @@ contract TestSiloBalanceConsistency is CredibleTest, Test {
         vault.updateNewTotalAssets(50_000e6);
 
         // Safe funds vault for redemptions
-        mockAsset.mint(safe.addr, 20_000e6);
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(20_000e6);
 
         // Register assertion (shares burned from Silo)
         cl.assertion({
@@ -453,9 +292,7 @@ contract TestSiloBalanceConsistency is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(60_000e6);
 
-        mockAsset.mint(safe.addr, 20_000e6);
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(20_000e6);
 
         cl.assertion({
             adopter: address(vault),
@@ -465,5 +302,188 @@ contract TestSiloBalanceConsistency is CredibleTest, Test {
 
         vm.prank(safe.addr);
         vault.settleRedeem(60_000e6);
+    }
+
+    // ============================================
+    // Airdrop/Donation Scenario Tests
+    // ============================================
+
+    /// @notice Test: Airdrop assets to Silo after requestDeposit
+    /// @dev Tests that extra assets in Silo don't break assertions
+    function testAirdropToSiloAssets_AfterRequestDeposit() public {
+        dealAndApproveAndWhitelist(user1.addr);
+
+        // User makes deposit request - Silo gets 10k assets
+        vm.prank(user1.addr);
+        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
+
+        // Airdrop 5k assets directly to Silo (donation/airdrop scenario)
+        address silo = vault.pendingSilo();
+        mockAsset.mint(silo, 5000e6);
+
+        // Now Silo has 15k but only 10k is from requests
+        uint256 siloBalance = mockAsset.balanceOf(silo);
+        assertEq(siloBalance, 15_000e6, "Silo should have 15k (10k request + 5k airdrop)");
+
+        // Try to settle - assertion should tolerate the extra 5k
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(10_000e6);
+
+        ensureSafeHasAssets(10_000e6);
+
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(SiloBalanceConsistencyAssertion).creationCode,
+            fnSelector: SiloBalanceConsistencyAssertion.assertionSettleDepositSiloBalance.selector
+        });
+
+        vm.prank(safe.addr);
+        vault.settleDeposit(10_000e6);
+
+        // After settlement, verify Silo balance
+        // The vault takes ALL assets from Silo during settlement, including airdrops
+        uint256 siloBalanceAfter = mockAsset.balanceOf(silo);
+        assertEq(siloBalanceAfter, 0, "Silo should be empty - vault takes all assets including airdrops");
+    }
+
+    /// @notice Test: Airdrop assets to Silo before settlement
+    /// @dev Tests that airdrops don't interfere with accounting during settlement
+    function testAirdropToSiloAssets_BeforeSettle() public {
+        dealAndApproveAndWhitelist(user1.addr);
+
+        // User makes deposit request
+        vm.prank(user1.addr);
+        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
+
+        // Prepare for settlement
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(10_000e6);
+
+        // Airdrop 3k assets to Silo right before settlement
+        address silo = vault.pendingSilo();
+        mockAsset.mint(silo, 3000e6);
+
+        ensureSafeHasAssets(10_000e6);
+
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(SiloBalanceConsistencyAssertion).creationCode,
+            fnSelector: SiloBalanceConsistencyAssertion.assertionSettleDepositSiloBalance.selector
+        });
+
+        vm.prank(safe.addr);
+        vault.settleDeposit(10_000e6);
+
+        // Silo should have 3k remaining (the airdrop)
+        uint256 siloBalanceAfter = mockAsset.balanceOf(silo);
+        assertEq(siloBalanceAfter, 3000e6, "Silo should have 3k remaining from airdrop");
+    }
+
+    /// @notice Test: Donate shares to Silo after requestRedeem
+    /// @dev Tests that extra shares in Silo don't break assertions
+    function testAirdropToSiloShares_AfterRequestRedeem() public {
+        // Setup: User needs shares to redeem
+        dealAndApproveAndWhitelist(user1.addr);
+        vm.prank(user1.addr);
+        vault.requestDeposit(20_000e6, user1.addr, user1.addr);
+
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(20_000e6);
+
+        ensureSafeHasAssets(20_000e6);
+
+        vm.prank(safe.addr);
+        vault.settleDeposit(20_000e6);
+
+        // User claims shares
+        vm.prank(user1.addr);
+        uint256 claimedShares = vault.deposit(20_000e6, user1.addr, user1.addr);
+
+        // User requests redeem for half their shares
+        vm.prank(user1.addr);
+        vault.requestRedeem(claimedShares / 2, user1.addr, user1.addr);
+
+        // Someone donates extra shares to Silo (airdrop scenario)
+        address silo = vault.pendingSilo();
+        vm.prank(user1.addr);
+        vault.transfer(silo, claimedShares / 4);
+
+        // Now Silo has more shares than just the redeem request
+        uint256 siloShareBalance = vault.balanceOf(silo);
+        assertGt(siloShareBalance, claimedShares / 2, "Silo should have extra donated shares");
+
+        // Try to settle redeem - assertion should tolerate extra shares
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(20_000e6);
+
+        ensureSafeHasAssets(10_000e6);
+
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(SiloBalanceConsistencyAssertion).creationCode,
+            fnSelector: SiloBalanceConsistencyAssertion.assertionSettleRedeemSiloBalance.selector
+        });
+
+        vm.prank(safe.addr);
+        vault.settleRedeem(20_000e6);
+    }
+
+    /// @notice Test: Donation to Safe does not affect Silo assertions
+    /// @dev Verifies that airdrops to Safe don't interfere with Silo accounting
+    function testDonationToSafe_DoesNotAffectSilo() public {
+        dealAndApproveAndWhitelist(user1.addr);
+
+        // User makes deposit request
+        vm.prank(user1.addr);
+        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
+
+        // Airdrop directly to Safe (not Silo)
+        mockAsset.mint(safe.addr, 50_000e6);
+
+        // Settle - Silo assertions should be unaffected by Safe airdrops
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(10_000e6);
+
+        vm.prank(safe.addr);
+        mockAsset.approve(address(vault), type(uint256).max);
+
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(SiloBalanceConsistencyAssertion).creationCode,
+            fnSelector: SiloBalanceConsistencyAssertion.assertionSettleDepositSiloBalance.selector
+        });
+
+        vm.prank(safe.addr);
+        vault.settleDeposit(10_000e6);
+
+        // Verify Silo is empty after settlement
+        address silo = vault.pendingSilo();
+        uint256 siloBalance = mockAsset.balanceOf(silo);
+        assertEq(siloBalance, 0, "Silo should be empty after settlement");
+    }
+
+    /// @notice Test: Airdrop happens in the same transaction as requestDeposit
+    /// @dev Tests edge case where balance changes mid-transaction
+    function testAirdropDuringRequestDeposit() public {
+        dealAndApproveAndWhitelist(user1.addr);
+
+        address silo = vault.pendingSilo();
+
+        // Pre-airdrop some assets to Silo before any requests
+        mockAsset.mint(silo, 2000e6);
+
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(SiloBalanceConsistencyAssertion).creationCode,
+            fnSelector: SiloBalanceConsistencyAssertion.assertionRequestDepositSiloBalance.selector
+        });
+
+        // User makes deposit request - assertion should handle pre-existing Silo balance
+        vm.prank(user1.addr);
+        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
+
+        // Silo should have initial 2k + 10k from request
+        uint256 siloBalance = mockAsset.balanceOf(silo);
+        assertEq(siloBalance, 12_000e6, "Silo should have 12k total");
     }
 }

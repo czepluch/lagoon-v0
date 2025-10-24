@@ -1,15 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {IVault} from "./IVault.sol";
 import {Assertion} from "credible-std/Assertion.sol";
-
-/// @notice Minimal interface for vault functions that modify epochs
-interface IVault {
-    function updateNewTotalAssets(uint256 newTotalAssets) external;
-    function settleDeposit(uint256 totalAssets) external;
-    function settleRedeem(uint256 totalAssets) external;
-    function syncDeposit(uint256 assets, address receiver, address referral) external payable returns (uint256 shares);
-}
 
 /// @title EpochInvariantsAssertion
 /// @notice Validates epoch management invariants for the Lagoon v0.4.0 & v0.5.0 ERC7540 vault
@@ -169,8 +162,7 @@ contract EpochInvariantsAssertion is Assertion {
 
         // Verify redeemEpochId did NOT change
         require(
-            preRedeemEpochId == postRedeemEpochId,
-            "Sync deposit isolation violation: syncDeposit changed redeemEpochId"
+            preRedeemEpochId == postRedeemEpochId, "Sync deposit isolation violation: syncDeposit changed redeemEpochId"
         );
     }
 }

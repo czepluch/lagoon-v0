@@ -54,9 +54,68 @@ import {PhEvm} from "credible-std/PhEvm.sol";
 ///
 /// @dev This assertion is high priority for v0.5.0
 contract SyncDepositModeAssertion_v0_5_0 is Assertion {
-    /// @notice ERC7540 storage location from the vault contract
+    /// @notice ERC7540 storage location
+    /// @dev keccak256(abi.encode(uint256(keccak256("hopper.storage.erc7540")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant ERC7540_STORAGE_LOCATION =
         0x5c74d456014b1c0eb4368d944667a568313858a3029a650ff0cb7b56f8b57a00;
+
+    /// @notice Offset of pendingSilo in ERC7540Storage struct (in storage slots)
+    /// @dev pendingSilo is at slot 8 in the struct (after 2 uint256s, packed uint40s, and 5 mappings)
+    uint256 private constant PENDING_SILO_OFFSET = 8;
+
+    /// @notice Offset of packed uint40s (depositEpochId, redeemEpochId, etc.) in ERC7540Storage
+    /// @dev All 6 uint40 values are packed in slot 2 (30 bytes total)
+    uint256 private constant PACKED_EPOCH_IDS_OFFSET = 2;
+
+    /// @notice Offset of totalAssetsExpiration and totalAssetsLifespan in ERC7540Storage
+    /// @dev Both uint128 values are in slot 10: expiration (lower 128 bits), lifespan (upper 128 bits)
+    uint256 private constant TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET = 10;
+
+    /// @notice Read the pendingSilo address from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return silo Address of the pending Silo
+    function _getPendingSilo(
+        address vault
+    ) internal view returns (address silo) {
+        bytes32 siloSlot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PENDING_SILO_OFFSET);
+        return address(uint160(uint256(ph.load(vault, siloSlot))));
+    }
+
+    /// @notice Read depositEpochId from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return epochId Current deposit epoch ID
+    function _getDepositEpochId(
+        address vault
+    ) internal view returns (uint40 epochId) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PACKED_EPOCH_IDS_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // depositEpochId is at bits 0-39 (first uint40 in the packed slot)
+        return uint40(uint256(data));
+    }
+
+    /// @notice Read totalAssetsExpiration from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return expiration NAV expiration timestamp
+    function _getTotalAssetsExpiration(
+        address vault
+    ) internal view returns (uint128 expiration) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsExpiration is in lower 128 bits of slot 10
+        return uint128(uint256(data));
+    }
+
+    /// @notice Read totalAssetsLifespan from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return lifespan NAV validity duration in seconds
+    function _getTotalAssetsLifespan(
+        address vault
+    ) internal view returns (uint128 lifespan) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsLifespan is in upper 128 bits of slot 10
+        return uint128(uint256(data) >> 128);
+    }
 
     /// @notice Registers assertion triggers on relevant vault functions
     function triggers() external view override {
@@ -82,7 +141,7 @@ contract SyncDepositModeAssertion_v0_5_0 is Assertion {
         IVault vault = IVault(ph.getAssertionAdopter());
 
         // syncDeposit() should only be called when NAV is valid (sync mode)
-        ph.forkPostTx();
+        ph.forkPostTx(); // Pre check probably makes more sense.
         bool navValid = vault.isTotalAssetsValid();
 
         require(navValid, "Mode violation: syncDeposit called but NAV is expired (should use requestDeposit)");
@@ -168,14 +227,14 @@ contract SyncDepositModeAssertion_v0_5_0 is Assertion {
 
         // Capture pre-state
         ph.forkPreTx();
-        uint40 preDepositEpochId = vault.depositEpochId();
-        address silo = vault.pendingSilo();
+        uint40 preDepositEpochId = _getDepositEpochId(address(vault));
+        address silo = _getPendingSilo(address(vault));
         address asset = vault.asset();
         uint256 preSiloBalance = IERC20(asset).balanceOf(silo);
 
         // Capture post-state
         ph.forkPostTx();
-        uint40 postDepositEpochId = vault.depositEpochId();
+        uint40 postDepositEpochId = _getDepositEpochId(address(vault));
         uint256 postSiloBalance = IERC20(asset).balanceOf(silo);
 
         // Verify depositEpochId did not change
@@ -194,8 +253,8 @@ contract SyncDepositModeAssertion_v0_5_0 is Assertion {
         IVault vault = IVault(ph.getAssertionAdopter());
 
         ph.forkPostTx();
-        uint256 totalAssetsExpiration = vault.totalAssetsExpiration();
-        uint256 totalAssetsLifespan = vault.totalAssetsLifespan();
+        uint256 totalAssetsExpiration = _getTotalAssetsExpiration(address(vault));
+        uint256 totalAssetsLifespan = _getTotalAssetsLifespan(address(vault));
 
         // Only check if sync mode is enabled (lifespan > 0)
         if (totalAssetsLifespan > 0) {

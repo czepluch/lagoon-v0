@@ -1,21 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {CredibleTest} from "credible-std/CredibleTest.sol";
-import {Test} from "forge-std/Test.sol";
-import {NAVValidityAssertion_v0_5_0} from "../src/NAVValidityAssertion_v0.5.0.a.sol";
-import {IVault} from "../src/IVault.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IVault} from "../../../src/IVault.sol";
+import {NAVValidityAssertion_v0_5_0} from "../../../src/NAVValidityAssertion_v0.5.0.a.sol";
+import {MockERC20, MockTestBase} from "../../MockTestBase.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-
-/// @title Mock ERC20 for testing
-contract MockERC20 is ERC20 {
-    constructor() ERC20("Mock Asset", "MOCK") {}
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Standalone Mock Vault for NAV Validity Testing
 /// @notice Minimal vault implementation with configurable buggy NAV lifecycle behavior
@@ -25,12 +15,26 @@ contract StandaloneMockVaultNAV is ERC20 {
         0x5c74d456014b1c0eb4368d944667a568313858a3029a650ff0cb7b56f8b57a00;
 
     struct ERC7540Storage {
-        uint256 totalAssets;
-        uint256 newTotalAssets;
-        uint40 depositEpochId;
-        uint40 redeemEpochId;
-        uint128 totalAssetsExpiration;
-        uint128 totalAssetsLifespan;
+        uint256 totalAssets; // slot 0
+        uint256 newTotalAssets; // slot 1
+        uint40 depositEpochId; // slot 2 (packed)
+        uint40 depositSettleId; // slot 2 (packed)
+        uint40 lastDepositEpochIdSettled; // slot 2 (packed)
+        uint40 redeemEpochId; // slot 2 (packed, continues in same slot)
+        uint40 redeemSettleId; // slot 2 (packed)
+        uint40 lastRedeemEpochIdSettled; // slot 2 (packed)
+        // Mappings take 1 slot marker each but data is elsewhere
+        mapping(uint40 => bytes32) epochs; // slot 3 (simplified from EpochData)
+        mapping(uint40 => bytes32) settles; // slot 4 (simplified from SettleData)
+        mapping(address => uint40) lastDepositRequestId; // slot 5
+        mapping(address => uint40) lastRedeemRequestId; // slot 6
+        mapping(address => mapping(address => bool)) isOperator; // slot 7
+        address pendingSilo; // slot 8
+        address wrappedNativeToken; // slot 9
+        uint8 decimals; // slot 10 (packed)
+        uint8 decimalsOffset; // slot 10 (packed)
+        uint128 totalAssetsExpiration; // slot 10 (packed, upper 128 bits)
+        uint128 totalAssetsLifespan; // slot 11 (lower 128 bits)
     }
 
     address public immutable asset;
@@ -38,11 +42,11 @@ contract StandaloneMockVaultNAV is ERC20 {
     address private immutable _pendingSilo;
 
     // Flags to control buggy behavior
-    bool public shouldReturnInconsistentValidity;      // Violates 5.A (returns wrong isTotalAssetsValid)
-    bool public validityInconsistentValue;             // Value to return when inconsistent
-    bool public shouldSkipExpirationUpdate;            // Violates 5.C (doesn't set expiration after settlement)
-    bool public shouldSkipLifespanEvent;               // Violates 5.D (doesn't emit event)
-    bool public shouldSetWrongExpiration;              // Violates 5.E (doesn't set to 0)
+    bool public shouldReturnInconsistentValidity; // Violates 5.A (returns wrong isTotalAssetsValid)
+    bool public validityInconsistentValue; // Value to return when inconsistent
+    bool public shouldSkipExpirationUpdate; // Violates 5.C (doesn't set expiration after settlement)
+    bool public shouldSkipLifespanEvent; // Violates 5.D (doesn't emit event)
+    bool public shouldSetWrongExpiration; // Violates 5.E (doesn't set to 0)
 
     event TotalAssetsLifespanUpdated(uint128 oldLifespan, uint128 newLifespan);
     event TotalAssetsUpdated(uint256 totalAssets);
@@ -61,6 +65,7 @@ contract StandaloneMockVaultNAV is ERC20 {
         _pendingSilo = pendingSiloAddr;
 
         ERC7540Storage storage $ = _getERC7540Storage();
+        $.pendingSilo = pendingSiloAddr;
         $.depositEpochId = 1;
         $.redeemEpochId = 2;
         $.totalAssetsLifespan = 0; // Default async-only mode
@@ -75,7 +80,9 @@ contract StandaloneMockVaultNAV is ERC20 {
 
     // ============ Flag Configuration Functions ============
 
-    function enableInconsistentValidity(bool returnValue) external {
+    function enableInconsistentValidity(
+        bool returnValue
+    ) external {
         shouldReturnInconsistentValidity = true;
         validityInconsistentValue = returnValue;
     }
@@ -105,7 +112,9 @@ contract StandaloneMockVaultNAV is ERC20 {
     }
 
     /// @notice Update NAV (simplified for testing)
-    function updateNewTotalAssets(uint256 newValue) external {
+    function updateNewTotalAssets(
+        uint256 newValue
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
         $.newTotalAssets = newValue;
         $.totalAssets = newValue;
@@ -113,7 +122,9 @@ contract StandaloneMockVaultNAV is ERC20 {
     }
 
     /// @notice Settle deposit (simplified)
-    function settleDeposit(uint256 newTotalAssets) external {
+    function settleDeposit(
+        uint256 newTotalAssets
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
         $.totalAssets = newTotalAssets;
 
@@ -132,7 +143,9 @@ contract StandaloneMockVaultNAV is ERC20 {
     }
 
     /// @notice Settle redeem (simplified)
-    function settleRedeem(uint256 newTotalAssets) external {
+    function settleRedeem(
+        uint256 newTotalAssets
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
         $.totalAssets = newTotalAssets;
 
@@ -149,7 +162,9 @@ contract StandaloneMockVaultNAV is ERC20 {
     }
 
     /// @notice Update lifespan
-    function updateTotalAssetsLifespan(uint128 newLifespan) external {
+    function updateTotalAssetsLifespan(
+        uint128 newLifespan
+    ) external {
         ERC7540Storage storage $ = _getERC7540Storage();
         uint128 oldLifespan = $.totalAssetsLifespan;
         $.totalAssetsLifespan = newLifespan;
@@ -201,14 +216,14 @@ contract StandaloneMockVaultNAV is ERC20 {
 /// @title TestNAVValidityAssertionMock
 /// @notice Tests that NAV validity assertions catch violations
 /// @dev Each test enables a specific violation flag and verifies the assertion reverts
-contract TestNAVValidityAssertionMock is CredibleTest, Test {
+contract TestNAVValidityAssertionMock is MockTestBase {
     MockERC20 public mockAsset;
     StandaloneMockVaultNAV public vault;
     address public mockSafe = address(0x1234);
     address public mockSilo = address(0x5678);
 
     function setUp() public {
-        mockAsset = new MockERC20();
+        mockAsset = new MockERC20("Mock Asset", "MOCK", 18);
         vault = new StandaloneMockVaultNAV(address(mockAsset), mockSafe, mockSilo);
 
         mockAsset.mint(address(this), 1_000_000e18);

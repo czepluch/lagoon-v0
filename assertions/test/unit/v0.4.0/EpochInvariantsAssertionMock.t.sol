@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {AssertionBaseTest} from "./AssertionBaseTest.sol";
-import {EpochInvariantsAssertion} from "../src/EpochInvariantsAssertion.a.sol";
-import {VaultHelper} from "@test/v0.4.0/VaultHelper.sol";
-import {ERC7540} from "@src/v0.4.0/ERC7540.sol";
-import {InitStruct as BeaconProxyInitStruct} from "@src/protocol-v1/BeaconProxyFactory.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {EpochInvariantsAssertion} from "../../../src/EpochInvariantsAssertion.a.sol";
+import {AssertionBaseTest} from "../../AssertionBaseTest.sol";
+
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {InitStruct as BeaconProxyInitStruct} from "@src/protocol-v1/BeaconProxyFactory.sol";
+import {ERC7540} from "@src/v0.4.0/ERC7540.sol";
+
 import "@src/v0.4.0/primitives/Events.sol";
+import {VaultHelper} from "@test/v0.4.0/VaultHelper.sol";
 
 /// @title Standalone Mock Vault for Epoch Invariant Testing
 /// @notice Minimal vault implementation with configurable buggy epoch behavior
@@ -97,7 +99,9 @@ contract StandaloneMockVault is ERC20 {
     }
 
     /// @notice Updates epochs with configurable increment values
-    function updateNewTotalAssets(uint256 _newTotalAssets) public {
+    function updateNewTotalAssets(
+        uint256 _newTotalAssets
+    ) public {
         require(msg.sender == valuationManager, "Only valuation manager");
 
         ERC7540Storage storage $ = _getERC7540Storage();
@@ -147,7 +151,9 @@ contract StandaloneMockVault is ERC20 {
     }
 
     /// @notice Settles deposits with configurable lastSettled value
-    function settleDeposit(uint256 totalAssets) public {
+    function settleDeposit(
+        uint256 totalAssets
+    ) public {
         require(msg.sender == valuationManager, "Only valuation manager");
 
         ERC7540Storage storage $ = _getERC7540Storage();
@@ -163,7 +169,9 @@ contract StandaloneMockVault is ERC20 {
     }
 
     /// @notice Settles redeems with configurable lastSettled value
-    function settleRedeem(uint256 totalAssets) public {
+    function settleRedeem(
+        uint256 totalAssets
+    ) public {
         require(msg.sender == valuationManager, "Only valuation manager");
 
         ERC7540Storage storage $ = _getERC7540Storage();
@@ -191,16 +199,22 @@ contract StandaloneMockVault is ERC20 {
 /// @notice Test vault that can intentionally violate epoch parity invariants
 /// @dev Extends VaultHelper and adds helper functions to corrupt storage for testing
 contract MockVaultEpochViolation is VaultHelper {
-    constructor(bool disable) VaultHelper(disable) {}
+    constructor(
+        bool disable
+    ) VaultHelper(disable) {}
 
     /// @notice Corrupt depositEpochId for testing parity violations
-    function corruptDepositEpochId(uint40 value) external {
+    function corruptDepositEpochId(
+        uint40 value
+    ) external {
         ERC7540.ERC7540Storage storage $ = _getERC7540Storage();
         $.depositEpochId = value;
     }
 
     /// @notice Corrupt redeemEpochId for testing parity violations
-    function corruptRedeemEpochId(uint40 value) external {
+    function corruptRedeemEpochId(
+        uint40 value
+    ) external {
         ERC7540.ERC7540Storage storage $ = _getERC7540Storage();
         $.redeemEpochId = value;
     }
@@ -245,7 +259,8 @@ contract TestEpochInvariantsAssertionMock is AssertionBaseTest {
         mockVault.addToWhitelist(toWhitelist);
 
         // Deploy standalone mock vault for increment violation tests
-        standaloneMockVault = new StandaloneMockVault(address(mockAsset), valuationManager.addr, address(0x1234)); // Simple pending silo address
+        standaloneMockVault = new StandaloneMockVault(address(mockAsset), valuationManager.addr, address(0x1234)); // Simple
+            // pending silo address
     }
 
     // ==================== Invariant #2.1: Epoch Parity Failure Tests ====================

@@ -44,6 +44,7 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
     bytes32 private constant TOTAL_ASSETS_UPDATED_SIG = keccak256("TotalAssetsUpdated(uint256)");
     bytes32 private constant DEPOSIT_SYNC_SIG = keccak256("DepositSync(address,address,uint256,uint256)");
     /// @notice Registers assertion triggers on settlement functions
+
     function triggers() external view override {
         // 1.A Accounting Conservation
         registerCallTrigger(this.assertionSettleDepositAccounting.selector, IVault.settleDeposit.selector);
@@ -56,12 +57,8 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
 
     /// @notice Invariant 1.A: Verify totalAssets increases correctly after settleDeposit()
     /// @dev Verifies: totalAssets_new = totalAssets_old + pendingAssets
-    /// @dev Handles early return when pendingAssets == 0 (no event emitted)
     function assertionSettleDepositAccounting() external {
         IVault vault = IVault(ph.getAssertionAdopter());
-
-        // Get pre-state (not used, but required for fork setup)
-        ph.forkPreTx();
 
         // Get post-state and extract pendingAssets from event
         ph.forkPostTx();
@@ -86,7 +83,7 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
                     // SettleDeposit(uint40 indexed lastDepositEpochIdSettled, uint40 indexed depositSettleId,
                     //               uint256 totalAssets, uint256 totalSupply, uint256 pendingAssets, uint256 shares)
                     // Non-indexed in data: totalAssets, totalSupply, pendingAssets, shares
-                    (, , uint256 eventPendingAssets,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+                    (,, uint256 eventPendingAssets,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
                     pendingAssets = eventPendingAssets;
                     settleEventFound = true;
                 }
@@ -103,9 +100,7 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
             );
         } else if (navUpdateFound && !settleEventFound) {
             // NAV updated but no pending deposits (_settleDeposit returned early)
-            require(
-                postTotalAssets == newTotalAssets, "Accounting violation: totalAssets incorrect with no pending"
-            );
+            require(postTotalAssets == newTotalAssets, "Accounting violation: totalAssets incorrect with no pending");
         } else {
             // This shouldn't happen - settleDeposit always updates NAV
             require(false, "Accounting violation: expected TotalAssetsUpdated event");
@@ -114,12 +109,8 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
 
     /// @notice Invariant 1.A: Verify totalAssets decreases correctly after settleRedeem()
     /// @dev Verifies: totalAssets_new = newTotalAssets - assetsWithdrawn
-    /// @dev Handles early return when pendingShares == 0 or insufficient Safe balance (no event emitted)
     function assertionSettleRedeemAccounting() external {
         IVault vault = IVault(ph.getAssertionAdopter());
-
-        // Get pre-state (not used, but required for fork setup)
-        ph.forkPreTx();
 
         // Get post-state and extract assetsWithdrawn from event
         ph.forkPostTx();
@@ -142,9 +133,10 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
                     navUpdateFound = true;
                 } else if (logs[i].topics[0] == SETTLE_REDEEM_SIG) {
                     // SettleRedeem(uint40 indexed lastRedeemEpochIdSettled, uint40 indexed redeemSettleId,
-                    //              uint256 totalAssets, uint256 totalSupply, uint256 assetsWithdrawn, uint256 pendingShares)
+                    //              uint256 totalAssets, uint256 totalSupply, uint256 assetsWithdrawn, uint256
+                    // pendingShares)
                     // Non-indexed in data: totalAssets, totalSupply, assetsWithdrawn, pendingShares
-                    (, , uint256 eventAssetsWithdrawn,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+                    (,, uint256 eventAssetsWithdrawn,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
                     assetsWithdrawn = eventAssetsWithdrawn;
                     settleEventFound = true;
                 }
@@ -161,9 +153,7 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
             );
         } else if (navUpdateFound && !settleEventFound) {
             // NAV updated but no pending redemptions (_settleRedeem returned early)
-            require(
-                postTotalAssets == newTotalAssets, "Accounting violation: totalAssets incorrect with no pending"
-            );
+            require(postTotalAssets == newTotalAssets, "Accounting violation: totalAssets incorrect with no pending");
         } else {
             // This shouldn't happen - settleRedeem always updates NAV
             require(false, "Accounting violation: expected TotalAssetsUpdated event");
@@ -193,9 +183,10 @@ contract TotalAssetsAccountingAssertion_v0_5_0 is Assertion {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].emitter == address(vault) && logs[i].topics[0] == SETTLE_REDEEM_SIG) {
                 // SettleRedeem(uint40 indexed lastRedeemEpochIdSettled, uint40 indexed redeemSettleId,
-                //              uint256 totalAssets, uint256 totalSupply, uint256 assetsWithdrawn, uint256 pendingShares)
+                //              uint256 totalAssets, uint256 totalSupply, uint256 assetsWithdrawn, uint256
+                // pendingShares)
                 // Non-indexed in data: totalAssets, totalSupply, assetsWithdrawn, pendingShares
-                (, , uint256 eventAssetsWithdrawn,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+                (,, uint256 eventAssetsWithdrawn,) = abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
                 assetsWithdrawn = eventAssetsWithdrawn;
                 eventFound = true;
                 break;

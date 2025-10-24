@@ -57,16 +57,47 @@ import {PhEvm} from "credible-std/PhEvm.sol";
 ///
 /// @dev This assertion is high priority for v0.5.0 - checked on every NAV lifecycle operation
 contract NAVValidityAssertion_v0_5_0 is Assertion {
+    /// @notice ERC7540 storage location
+    /// @dev keccak256(abi.encode(uint256(keccak256("hopper.storage.erc7540")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant ERC7540_STORAGE_LOCATION =
+        0x5c74d456014b1c0eb4368d944667a568313858a3029a650ff0cb7b56f8b57a00;
+
+    /// @notice Offset of totalAssetsExpiration and totalAssetsLifespan in ERC7540Storage
+    /// @dev Both uint128 values are in slot 10: expiration (lower 128 bits), lifespan (upper 128 bits)
+    uint256 private constant TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET = 10;
+
     /// @notice Event signatures for parsing logs
     bytes32 private constant LIFESPAN_UPDATED_SIG = keccak256("TotalAssetsLifespanUpdated(uint128,uint128)");
+
+    /// @notice Read totalAssetsExpiration from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return expiration NAV expiration timestamp
+    function _getTotalAssetsExpiration(
+        address vault
+    ) internal view returns (uint128 expiration) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsExpiration is in lower 128 bits of slot 10
+        return uint128(uint256(data));
+    }
+
+    /// @notice Read totalAssetsLifespan from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return lifespan NAV validity duration in seconds
+    function _getTotalAssetsLifespan(
+        address vault
+    ) internal view returns (uint128 lifespan) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsLifespan is in upper 128 bits of slot 10
+        return uint128(uint256(data) >> 128);
+    }
 
     /// @notice Registers assertion triggers on relevant vault functions
     function triggers() external view override {
         // 5.A NAV Validity Consistency
         registerCallTrigger(this.assertionIsTotalAssetsValidConsistency.selector, IVault.updateNewTotalAssets.selector);
-        registerCallTrigger(
-            this.assertionIsTotalAssetsValidConsistency.selector, IVault.settleDeposit.selector
-        );
+        registerCallTrigger(this.assertionIsTotalAssetsValidConsistency.selector, IVault.settleDeposit.selector);
         registerCallTrigger(this.assertionIsTotalAssetsValidConsistency.selector, IVault.settleRedeem.selector);
         registerCallTrigger(this.assertionIsTotalAssetsValidConsistency.selector, IVault.expireTotalAssets.selector);
 
@@ -90,7 +121,7 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
         IVault vault = IVault(ph.getAssertionAdopter());
 
         ph.forkPostTx();
-        uint256 expiration = vault.totalAssetsExpiration();
+        uint256 expiration = _getTotalAssetsExpiration(address(vault));
         bool actual = vault.isTotalAssetsValid();
 
         // Calculate expected result: valid only if expiration > 0 AND block.timestamp < expiration
@@ -112,10 +143,7 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
         ph.forkPreTx();
         bool navValidBefore = vault.isTotalAssetsValid();
 
-        require(
-            !navValidBefore,
-            "Access control violation: updateNewTotalAssets() called while NAV is still valid"
-        );
+        require(!navValidBefore, "Access control violation: updateNewTotalAssets() called while NAV is still valid");
     }
 
     /// @notice Invariant 5.C: Expiration Timestamp After Settlement
@@ -124,15 +152,14 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
         IVault vault = IVault(ph.getAssertionAdopter());
 
         ph.forkPostTx();
-        uint256 expiration = vault.totalAssetsExpiration();
-        uint256 lifespan = vault.totalAssetsLifespan();
+        uint256 expiration = _getTotalAssetsExpiration(address(vault));
+        uint256 lifespan = _getTotalAssetsLifespan(address(vault));
 
         if (lifespan > 0) {
             // If lifespan is set, expiration should be block.timestamp + lifespan
             uint256 expected = block.timestamp + lifespan;
             require(
-                expiration == expected,
-                "Expiration violation: totalAssetsExpiration not set correctly after settlement"
+                expiration == expected, "Expiration violation: totalAssetsExpiration not set correctly after settlement"
             );
         } else {
             // If lifespan is 0, expiration should be block.timestamp or 0 (both mean expired)
@@ -169,7 +196,7 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
 
         // Verify vault state matches event
         ph.forkPostTx();
-        uint256 actualLifespan = vault.totalAssetsLifespan();
+        uint256 actualLifespan = _getTotalAssetsLifespan(address(vault));
         require(
             actualLifespan == uint256(newLifespan),
             "Lifespan violation: totalAssetsLifespan doesn't match emitted event"
@@ -182,7 +209,7 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
         IVault vault = IVault(ph.getAssertionAdopter());
 
         ph.forkPostTx();
-        uint256 expiration = vault.totalAssetsExpiration();
+        uint256 expiration = _getTotalAssetsExpiration(address(vault));
         bool navValid = vault.isTotalAssetsValid();
 
         require(expiration == 0, "Manual expiration violation: totalAssetsExpiration not set to 0");

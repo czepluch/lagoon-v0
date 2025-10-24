@@ -1,163 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {TotalAssetsAccountingAssertion_v0_5_0} from "../src/TotalAssetsAccountingAssertion_v0.5.0.a.sol";
-import {EpochInvariantsAssertion} from "../src/EpochInvariantsAssertion.a.sol";
-import {CredibleTest} from "credible-std/CredibleTest.sol";
-import {Test} from "forge-std/Test.sol";
-import {VmSafe} from "forge-std/Vm.sol";
-
-import {VaultHelper} from "@test/v0.5.0/VaultHelper.sol";
-import {FeeRegistry} from "@src/protocol-v1/FeeRegistry.sol";
-import {BeaconProxyFactory, InitStruct as BeaconProxyInitStruct} from "@src/protocol-v1/BeaconProxyFactory.sol";
-
-import {IERC20Metadata, IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-
-using SafeERC20 for IERC20;
-using Math for uint256;
-
-/// @title MockERC20
-/// @notice Simple mock ERC20 token for testing
-contract MockERC20 is ERC20 {
-    uint8 private _decimals;
-
-    constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
-        _decimals = decimals_;
-    }
-
-    function decimals() public view virtual override returns (uint8) {
-        return _decimals;
-    }
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
-    }
-}
-
-/// @title MockWETH
-/// @notice Simple mock WETH for testing
-contract MockWETH is MockERC20 {
-    constructor() MockERC20("Wrapped Ether", "WETH", 18) {}
-
-    receive() external payable {
-        _mint(msg.sender, msg.value);
-    }
-
-    function deposit() external payable {
-        _mint(msg.sender, msg.value);
-    }
-
-    function withdraw(uint256 amount) external {
-        _burn(msg.sender, amount);
-        payable(msg.sender).transfer(amount);
-    }
-}
+import {EpochInvariantsAssertion} from "../../../src/EpochInvariantsAssertion.a.sol";
+import {TotalAssetsAccountingAssertion_v0_5_0} from "../../../src/TotalAssetsAccountingAssertion_v0.5.0.a.sol";
+import {AssertionBaseTest_v0_5_0} from "../../AssertionBaseTest_v0_5_0.sol";
 
 /// @title TestTotalAssetsAccountingAssertion
 /// @notice Tests Invariant #1: Total Assets Accounting Integrity for v0.5.0
 /// @dev Tests cover:
 ///      - 1.A: Accounting Conservation (settleDeposit, settleRedeem)
 ///      - 1.B: Solvency (vault balance covers claimable redemptions)
-contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
-    // ============ Mock Tokens ============
-    MockERC20 public mockAsset;
-    MockWETH public mockWETH;
-
-    // ============ Protocol Contracts ============
-    VaultHelper public vault;
-    FeeRegistry public feeRegistry;
-    BeaconProxyFactory public factory;
-
-    // ============ Configuration ============
-    bool proxy = false;
-    uint8 decimalsOffset = 0;
-    string vaultName = "Test Vault v0.5.0";
-    string vaultSymbol = "TVAULT5";
-    uint256 rateUpdateCooldown = 1 days;
-    address[] whitelistInit = new address[](0);
-    bool enableWhitelist = true;
-
-    // ============ Test Users ============
-    VmSafe.Wallet public user1 = vm.createWallet("user1");
-    VmSafe.Wallet public user2 = vm.createWallet("user2");
-
-    VmSafe.Wallet public owner = vm.createWallet("owner");
-    VmSafe.Wallet public safe = vm.createWallet("safe");
-    VmSafe.Wallet public valuationManager = vm.createWallet("valuationManager");
-    VmSafe.Wallet public admin = vm.createWallet("admin");
-    VmSafe.Wallet public feeReceiver = vm.createWallet("feeReceiver");
-    VmSafe.Wallet public dao = vm.createWallet("dao");
-    VmSafe.Wallet public whitelistManager = vm.createWallet("whitelistManager");
-
+contract TestTotalAssetsAccountingAssertion is AssertionBaseTest_v0_5_0 {
     function setUp() public {
-        // Deploy mock tokens
-        mockAsset = new MockERC20("Mock USDC", "USDC", 6);
-        mockWETH = new MockWETH();
-
-        // Initialize fee registry
-        feeRegistry = new FeeRegistry(false);
-        feeRegistry.initialize(dao.addr, dao.addr);
-
-        // Deploy vault implementation
-        bool disableImplementationInit = proxy;
-        address implementation = address(new VaultHelper(disableImplementationInit));
-
-        // Deploy factory
-        factory = new BeaconProxyFactory(address(feeRegistry), implementation, dao.addr, address(mockWETH));
-
-        // Prepare initialization struct with zero fees for simplicity
-        BeaconProxyInitStruct memory initStruct = BeaconProxyInitStruct({
-            underlying: address(mockAsset),
-            name: vaultName,
-            symbol: vaultSymbol,
-            safe: safe.addr,
-            whitelistManager: whitelistManager.addr,
-            valuationManager: valuationManager.addr,
-            admin: admin.addr,
-            feeReceiver: feeReceiver.addr,
-            managementRate: 0,
-            performanceRate: 0,
-            rateUpdateCooldown: rateUpdateCooldown,
-            enableWhitelist: enableWhitelist
-        });
-
-        // Deploy vault (direct deployment for simplicity)
-        vault = VaultHelper(implementation);
-        vault.initialize(abi.encode(initStruct), address(feeRegistry), address(mockWETH));
-
-        // Whitelist essential addresses
-        if (enableWhitelist) {
-            whitelistInit.push(feeReceiver.addr);
-            whitelistInit.push(dao.addr);
-            whitelistInit.push(safe.addr);
-            whitelistInit.push(vault.pendingSilo());
-            whitelistInit.push(address(feeRegistry));
-            vm.prank(whitelistManager.addr);
-            vault.addToWhitelist(whitelistInit);
-        }
-
-        // Label contracts for better trace output
-        vm.label(address(vault), vaultName);
-        vm.label(vault.pendingSilo(), "vault.pendingSilo");
-        vm.label(address(mockAsset), "MockUSDC");
-        vm.label(address(mockWETH), "MockWETH");
-    }
-
-    // ============ Helper Functions ============
-
-    function dealAndApproveAndWhitelist(address user) internal {
-        mockAsset.mint(user, 100_000e6); // 100k USDC
-        vm.prank(user);
-        IERC20(address(mockAsset)).approve(address(vault), type(uint256).max);
-        deal(user, 100 ether); // Gas
-
-        address[] memory usersArray = new address[](1);
-        usersArray[0] = user;
-        vm.prank(whitelistManager.addr);
-        vault.addToWhitelist(usersArray);
+        setUpVault(0, 0, 6); // Zero fees, 6 decimals (USDC)
     }
 
     // ==================== Invariant 1.A: Accounting Conservation Tests ====================
@@ -257,13 +112,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vault.updateNewTotalAssets(60_000e6);
 
         // Setup: Safe gets assets and approves vault (must be BEFORE cl.assertion)
-        uint256 safeBalance = mockAsset.balanceOf(safe.addr);
-        uint256 needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         // Register assertion
         cl.assertion({
@@ -309,13 +158,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(60_000e6);
 
-        uint256 safeBalance = mockAsset.balanceOf(safe.addr);
-        uint256 needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         cl.assertion({
             adopter: address(vault),
@@ -334,13 +177,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(40_000e6);
 
-        safeBalance = mockAsset.balanceOf(safe.addr);
-        needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         cl.assertion({
             adopter: address(vault),
@@ -391,13 +228,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(60_000e6);
 
-        uint256 safeBalance = mockAsset.balanceOf(safe.addr);
-        uint256 needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         // Register assertion
         cl.assertion({
@@ -409,6 +240,81 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         // Settle with zero pending - assertion should pass (no event, no state change)
         vm.prank(safe.addr);
         vault.settleRedeem(60_000e6);
+    }
+
+    // ==================== Batched Operations Tests ====================
+
+    /// @notice Test: Multiple requestDeposit calls in same transaction
+    /// @dev Verifies Silo balance and pending deposits accumulate correctly
+    function testBatchedMultipleRequestDeposits() public {
+        dealAndApproveAndWhitelist(user1.addr);
+
+        // Multiple requestDeposit calls in one transaction
+        vm.startPrank(user1.addr);
+        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
+        vault.requestDeposit(5000e6, user1.addr, user1.addr);
+        vault.requestDeposit(3000e6, user1.addr, user1.addr);
+        vm.stopPrank();
+
+        // Verify assets went to Silo
+        address silo = vault.pendingSilo();
+        assertEq(mockAsset.balanceOf(silo), 18_000e6, "Silo should have all deposited assets");
+
+        // Settle and verify accounting
+        // Vault is empty (totalAssets = 0), so NAV before settlement is 0
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(0);
+
+        vm.prank(safe.addr);
+        mockAsset.approve(address(vault), type(uint256).max);
+
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(TotalAssetsAccountingAssertion_v0_5_0).creationCode,
+            fnSelector: TotalAssetsAccountingAssertion_v0_5_0.assertionSettleDepositAccounting.selector
+        });
+
+        vm.prank(safe.addr);
+        vault.settleDeposit(0);
+
+        // Verify totalAssets matches
+        assertEq(vault.totalAssets(), 18_000e6, "Total assets should match all deposits");
+    }
+
+    /// @notice Test: settleDeposit followed by new requestDeposit in same transaction
+    /// @dev Verifies accounting when settlement and new request happen together
+    function testBatchedSettleAndNewRequest() public {
+        dealAndApproveAndWhitelist(user1.addr);
+        dealAndApproveAndWhitelist(user2.addr);
+
+        // User1 makes initial request
+        vm.prank(user1.addr);
+        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
+
+        // Vault is empty (totalAssets = 0), so NAV before settlement is 0
+        vm.prank(valuationManager.addr);
+        vault.updateNewTotalAssets(0);
+
+        vm.prank(safe.addr);
+        mockAsset.approve(address(vault), type(uint256).max);
+
+        // Register assertion
+        cl.assertion({
+            adopter: address(vault),
+            createData: type(TotalAssetsAccountingAssertion_v0_5_0).creationCode,
+            fnSelector: TotalAssetsAccountingAssertion_v0_5_0.assertionSettleDepositAccounting.selector
+        });
+
+        // Settle user1's deposit, then user2 makes new request (simulated batched tx)
+        vm.prank(safe.addr);
+        vault.settleDeposit(0);
+
+        vm.prank(user2.addr);
+        vault.requestDeposit(5000e6, user2.addr, user2.addr);
+
+        // Verify accounting: totalAssets = 10k, Silo = 5k
+        assertEq(vault.totalAssets(), 10_000e6, "Total assets from first settlement");
+        assertEq(mockAsset.balanceOf(vault.pendingSilo()), 5000e6, "New deposit in Silo");
     }
 
     // ==================== Invariant 1.B: Solvency Tests ====================
@@ -438,13 +344,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(60_000e6);
 
-        uint256 safeBalance = mockAsset.balanceOf(safe.addr);
-        uint256 needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         // Register solvency assertion
         cl.assertion({
@@ -490,13 +390,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(60_000e6);
 
-        uint256 safeBalance = mockAsset.balanceOf(safe.addr);
-        uint256 needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         cl.assertion({
             adopter: address(vault),
@@ -515,13 +409,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(40_000e6);
 
-        safeBalance = mockAsset.balanceOf(safe.addr);
-        needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         cl.assertion({
             adopter: address(vault),
@@ -551,13 +439,7 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         vm.prank(valuationManager.addr);
         vault.updateNewTotalAssets(60_000e6);
 
-        uint256 safeBalance = mockAsset.balanceOf(safe.addr);
-        uint256 needed = vault.totalAssets();
-        if (safeBalance < needed) {
-            mockAsset.mint(safe.addr, needed - safeBalance);
-        }
-        vm.prank(safe.addr);
-        mockAsset.approve(address(vault), type(uint256).max);
+        ensureSafeHasAssets(vault.totalAssets());
 
         // Register solvency assertion
         cl.assertion({
@@ -668,5 +550,4 @@ contract TestTotalAssetsAccountingAssertion is CredibleTest, Test {
         assertEq(vault.depositEpochId(), preDepositEpochId, "depositEpochId should not change");
         assertEq(vault.redeemEpochId(), preRedeemEpochId, "redeemEpochId should not change");
     }
-
 }

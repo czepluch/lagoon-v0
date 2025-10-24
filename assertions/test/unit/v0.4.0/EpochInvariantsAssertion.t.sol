@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {EpochInvariantsAssertion} from "../src/EpochInvariantsAssertion.a.sol";
-import {AssertionBaseTest} from "./AssertionBaseTest.sol";
+import {EpochInvariantsAssertion} from "../../../src/EpochInvariantsAssertion.a.sol";
+import {AssertionBaseTest} from "../../AssertionBaseTest.sol";
 
 /// @title EpochInvariantsAssertion Happy Path Tests
 /// @notice Tests all epoch-related invariants against real v0.4.0 Vault contracts
