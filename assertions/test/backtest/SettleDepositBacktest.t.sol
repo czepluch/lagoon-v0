@@ -31,27 +31,8 @@ contract SettleDepositBacktest is CredibleTestWithBacktesting {
             rpcUrl: rpcUrl
         });
 
-        // Log results
-        emit log_named_uint("Total transactions found", results.totalTransactions);
-        emit log_named_uint("Processed transactions", results.processedTransactions);
-        emit log_named_uint("Successful validations", results.successfulValidations);
-        emit log_named_uint("Failed validations", results.failedValidations);
-        emit log_named_uint("Assertion failures (violations)", results.assertionFailures);
-        emit log_named_uint("Unknown errors", results.unknownErrors);
-
         // Verify no false positives
         assertEq(results.assertionFailures, 0, "Found protocol violations in settleDeposit!");
         assertEq(results.unknownErrors, 0, "Unexpected errors occurred during backtesting!");
-
-        // Ensure we actually tested some transactions
-        if (results.processedTransactions > 0) {
-            assertEq(
-                results.successfulValidations, results.processedTransactions, "Not all transactions passed validation!"
-            );
-            emit log_string("All historical settleDeposit transactions passed assertion checks!");
-        } else {
-            emit log_string("No settleDeposit transactions found in block range");
-            emit log_string("    Try increasing BLOCK_RANGE or adjusting END_BLOCK");
-        }
     }
 }

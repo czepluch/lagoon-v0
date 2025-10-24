@@ -69,30 +69,6 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
     /// @notice Event signatures for parsing logs
     bytes32 private constant LIFESPAN_UPDATED_SIG = keccak256("TotalAssetsLifespanUpdated(uint128,uint128)");
 
-    /// @notice Read totalAssetsExpiration from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return expiration NAV expiration timestamp
-    function _getTotalAssetsExpiration(
-        address vault
-    ) internal view returns (uint128 expiration) {
-        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
-        bytes32 data = ph.load(vault, slot);
-        // totalAssetsExpiration is in lower 128 bits of slot 10
-        return uint128(uint256(data));
-    }
-
-    /// @notice Read totalAssetsLifespan from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return lifespan NAV validity duration in seconds
-    function _getTotalAssetsLifespan(
-        address vault
-    ) internal view returns (uint128 lifespan) {
-        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
-        bytes32 data = ph.load(vault, slot);
-        // totalAssetsLifespan is in upper 128 bits of slot 10
-        return uint128(uint256(data) >> 128);
-    }
-
     /// @notice Registers assertion triggers on relevant vault functions
     function triggers() external view override {
         // 5.A NAV Validity Consistency
@@ -214,5 +190,29 @@ contract NAVValidityAssertion_v0_5_0 is Assertion {
 
         require(expiration == 0, "Manual expiration violation: totalAssetsExpiration not set to 0");
         require(!navValid, "Manual expiration violation: isTotalAssetsValid() should return false");
+    }
+
+    /// @notice Read totalAssetsExpiration from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return expiration NAV expiration timestamp
+    function _getTotalAssetsExpiration(
+        address vault
+    ) internal view returns (uint128 expiration) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsExpiration is in lower 128 bits of slot 10
+        return uint128(uint256(data));
+    }
+
+    /// @notice Read totalAssetsLifespan from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return lifespan NAV validity duration in seconds
+    function _getTotalAssetsLifespan(
+        address vault
+    ) internal view returns (uint128 lifespan) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsLifespan is in upper 128 bits of slot 10
+        return uint128(uint256(data) >> 128);
     }
 }

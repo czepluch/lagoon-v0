@@ -71,52 +71,6 @@ contract SyncDepositModeAssertion_v0_5_0 is Assertion {
     /// @dev Both uint128 values are in slot 10: expiration (lower 128 bits), lifespan (upper 128 bits)
     uint256 private constant TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET = 10;
 
-    /// @notice Read the pendingSilo address from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return silo Address of the pending Silo
-    function _getPendingSilo(
-        address vault
-    ) internal view returns (address silo) {
-        bytes32 siloSlot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PENDING_SILO_OFFSET);
-        return address(uint160(uint256(ph.load(vault, siloSlot))));
-    }
-
-    /// @notice Read depositEpochId from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return epochId Current deposit epoch ID
-    function _getDepositEpochId(
-        address vault
-    ) internal view returns (uint40 epochId) {
-        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PACKED_EPOCH_IDS_OFFSET);
-        bytes32 data = ph.load(vault, slot);
-        // depositEpochId is at bits 0-39 (first uint40 in the packed slot)
-        return uint40(uint256(data));
-    }
-
-    /// @notice Read totalAssetsExpiration from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return expiration NAV expiration timestamp
-    function _getTotalAssetsExpiration(
-        address vault
-    ) internal view returns (uint128 expiration) {
-        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
-        bytes32 data = ph.load(vault, slot);
-        // totalAssetsExpiration is in lower 128 bits of slot 10
-        return uint128(uint256(data));
-    }
-
-    /// @notice Read totalAssetsLifespan from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return lifespan NAV validity duration in seconds
-    function _getTotalAssetsLifespan(
-        address vault
-    ) internal view returns (uint128 lifespan) {
-        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
-        bytes32 data = ph.load(vault, slot);
-        // totalAssetsLifespan is in upper 128 bits of slot 10
-        return uint128(uint256(data) >> 128);
-    }
-
     /// @notice Registers assertion triggers on relevant vault functions
     function triggers() external view override {
         // 4.A Mode Mutual Exclusivity - separate functions for each mode
@@ -269,5 +223,51 @@ contract SyncDepositModeAssertion_v0_5_0 is Assertion {
         // TODO: Verify TotalAssetsUpdated event was emitted
         // Event signature: TotalAssetsUpdated(uint256 newTotalAssets)
         // This would provide additional validation of the NAV update
+    }
+
+    /// @notice Read the pendingSilo address from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return silo Address of the pending Silo
+    function _getPendingSilo(
+        address vault
+    ) internal view returns (address silo) {
+        bytes32 siloSlot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PENDING_SILO_OFFSET);
+        return address(uint160(uint256(ph.load(vault, siloSlot))));
+    }
+
+    /// @notice Read depositEpochId from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return epochId Current deposit epoch ID
+    function _getDepositEpochId(
+        address vault
+    ) internal view returns (uint40 epochId) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PACKED_EPOCH_IDS_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // depositEpochId is at bits 0-39 (first uint40 in the packed slot)
+        return uint40(uint256(data));
+    }
+
+    /// @notice Read totalAssetsExpiration from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return expiration NAV expiration timestamp
+    function _getTotalAssetsExpiration(
+        address vault
+    ) internal view returns (uint128 expiration) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsExpiration is in lower 128 bits of slot 10
+        return uint128(uint256(data));
+    }
+
+    /// @notice Read totalAssetsLifespan from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return lifespan NAV validity duration in seconds
+    function _getTotalAssetsLifespan(
+        address vault
+    ) internal view returns (uint128 lifespan) {
+        bytes32 slot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + TOTAL_ASSETS_EXPIRATION_LIFESPAN_OFFSET);
+        bytes32 data = ph.load(vault, slot);
+        // totalAssetsLifespan is in upper 128 bits of slot 10
+        return uint128(uint256(data) >> 128);
     }
 }

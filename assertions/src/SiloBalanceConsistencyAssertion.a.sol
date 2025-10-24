@@ -36,7 +36,7 @@ import {PhEvm} from "credible-std/PhEvm.sol";
 /// transaction's delta is consistent, which implies the global invariant holds over time.
 contract SiloBalanceConsistencyAssertion is Assertion {
     /// @notice ERC7540 storage location
-    /// @dev keccak256(abi.encode(uint256(keccak256("hopper.storage.erc7540")) - 1)) & ~bytes32(uint256(0xff))
+    /// @dev keccak256(abi.encode(uint256(keccak256("hopper.storage.erc7540")) - 1))
     bytes32 private constant ERC7540_STORAGE_LOCATION =
         0x5c74d456014b1c0eb4368d944667a568313858a3029a650ff0cb7b56f8b57a00;
 
@@ -53,16 +53,6 @@ contract SiloBalanceConsistencyAssertion is Assertion {
     bytes32 private constant SETTLE_REDEEM_SIG =
         keccak256("SettleRedeem(uint40,uint40,uint256,uint256,uint256,uint256)");
     bytes32 private constant DEPOSIT_SYNC_SIG = keccak256("DepositSync(address,address,uint256,uint256)");
-
-    /// @notice Read the pendingSilo address from vault's ERC7540 storage
-    /// @param vault Address of the vault contract
-    /// @return silo Address of the pending Silo
-    function _getPendingSilo(
-        address vault
-    ) internal view returns (address silo) {
-        bytes32 siloSlot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PENDING_SILO_OFFSET);
-        return address(uint160(uint256(ph.load(vault, siloSlot))));
-    }
 
     /// @notice Registers assertion triggers on Silo-affecting functions
     function triggers() external view override {
@@ -327,5 +317,15 @@ contract SiloBalanceConsistencyAssertion is Assertion {
                 "Silo balance violation: Silo share balance decreased more than expected"
             );
         }
+    }
+
+    /// @notice Read the pendingSilo address from vault's ERC7540 storage
+    /// @param vault Address of the vault contract
+    /// @return silo Address of the pending Silo
+    function _getPendingSilo(
+        address vault
+    ) internal view returns (address silo) {
+        bytes32 siloSlot = bytes32(uint256(ERC7540_STORAGE_LOCATION) + PENDING_SILO_OFFSET);
+        return address(uint160(uint256(ph.load(vault, siloSlot))));
     }
 }
