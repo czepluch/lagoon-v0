@@ -22,15 +22,21 @@ contract RequestDepositBacktest is CredibleTestWithBacktesting {
         // Get RPC URL from environment
         string memory rpcUrl = vm.envString("MAINNET_RPC_URL");
 
-        // Execute backtest
-        BacktestingTypes.BacktestingResults memory results = executeBacktest({
+        // Configure backtest
+        BacktestingTypes.BacktestingConfig memory config = BacktestingTypes.BacktestingConfig({
             targetContract: VAULT_ADDRESS,
             endBlock: END_BLOCK,
             blockRange: BLOCK_RANGE,
             assertionCreationCode: type(SiloBalanceConsistencyAssertion).creationCode,
             assertionSelector: SiloBalanceConsistencyAssertion.assertionRequestDepositSiloBalance.selector,
-            rpcUrl: rpcUrl
+            rpcUrl: rpcUrl,
+            detailedBlocks: false,
+            useTraceFilter: false,
+            forkByTxHash: true
         });
+
+        // Execute backtest
+        BacktestingTypes.BacktestingResults memory results = executeBacktest(config);
 
         // Verify no false positives
         assertEq(results.assertionFailures, 0, "Found protocol violations in requestDeposit!");

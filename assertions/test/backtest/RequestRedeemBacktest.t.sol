@@ -12,8 +12,8 @@ import {BacktestingTypes} from "credible-std/utils/BacktestingTypes.sol";
 contract RequestRedeemBacktest is CredibleTestWithBacktesting {
     // Vault configuration
     address constant VAULT_ADDRESS = 0xDCD0f5ab30856F28385F641580Bbd85f88349124;
-    uint256 constant END_BLOCK = 23_646_467;
-    uint256 constant BLOCK_RANGE = 100;
+    uint256 constant END_BLOCK = 24_046_293;
+    uint256 constant BLOCK_RANGE = 10;
 
     /// @notice Test requestRedeem historical transactions for Silo consistency
     /// @dev This backtests the assertion that ensures shares are correctly transferred to Silo
@@ -22,15 +22,21 @@ contract RequestRedeemBacktest is CredibleTestWithBacktesting {
         // Get RPC URL from environment
         string memory rpcUrl = vm.envString("MAINNET_RPC_URL");
 
-        // Execute backtest
-        BacktestingTypes.BacktestingResults memory results = executeBacktest({
+        // Configure backtest
+        BacktestingTypes.BacktestingConfig memory config = BacktestingTypes.BacktestingConfig({
             targetContract: VAULT_ADDRESS,
             endBlock: END_BLOCK,
             blockRange: BLOCK_RANGE,
             assertionCreationCode: type(SiloBalanceConsistencyAssertion).creationCode,
             assertionSelector: SiloBalanceConsistencyAssertion.assertionRequestRedeemSiloBalance.selector,
-            rpcUrl: rpcUrl
+            rpcUrl: rpcUrl,
+            detailedBlocks: false,
+            useTraceFilter: false,
+            forkByTxHash: true
         });
+
+        // Execute backtest
+        BacktestingTypes.BacktestingResults memory results = executeBacktest(config);
 
         // Verify no false positives
         assertEq(results.assertionFailures, 0, "Found protocol violations in requestRedeem!");
