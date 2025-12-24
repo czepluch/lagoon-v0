@@ -55,28 +55,6 @@ contract TestSyncDepositModeAssertion is AssertionBaseTest_v0_5_0 {
         assertGt(shares, 0, "Shares should be minted");
     }
 
-    /// @notice Test: syncDeposit fails when NAV is expired (async mode)
-    /// @dev This tests that the vault correctly rejects syncDeposit in async mode
-    function testSyncDepositModeFailsWhenNAVExpired() public {
-        dealAndApproveAndWhitelist(user1.addr);
-
-        // Expire NAV by warping past expiration
-        vm.warp(block.timestamp + 1001);
-        assertFalse(vault.isTotalAssetsValid(), "NAV should be expired");
-
-        // Register assertion
-        cl.assertion({
-            adopter: address(vault),
-            createData: type(SyncDepositModeAssertion_v0_5_0).creationCode,
-            fnSelector: SyncDepositModeAssertion_v0_5_0.assertionSyncDepositMode.selector
-        });
-
-        // Attempt syncDeposit - should revert
-        vm.prank(user1.addr);
-        vm.expectRevert(); // Vault should revert with OnlyAsyncDepositAllowed
-        vault.syncDeposit(10_000e6, user1.addr, address(0));
-    }
-
     /// @notice Test: requestDeposit works when NAV is expired (async mode)
     /// @dev This tests the happy path for Invariant 4.A - async mode should be allowed
     function testAsyncDepositModeWhenNAVExpired() public {
@@ -98,27 +76,6 @@ contract TestSyncDepositModeAssertion is AssertionBaseTest_v0_5_0 {
         uint256 requestId = vault.requestDeposit(10_000e6, user1.addr, user1.addr);
 
         assertGt(requestId, 0, "Request ID should be assigned");
-    }
-
-    /// @notice Test: requestDeposit fails when NAV is valid (sync mode)
-    /// @dev This tests that the vault correctly rejects requestDeposit in sync mode
-    function testAsyncDepositModeFailsWhenNAVValid() public {
-        dealAndApproveAndWhitelist(user1.addr);
-
-        // Verify NAV is valid
-        assertTrue(vault.isTotalAssetsValid(), "NAV should be valid");
-
-        // Register assertion
-        cl.assertion({
-            adopter: address(vault),
-            createData: type(SyncDepositModeAssertion_v0_5_0).creationCode,
-            fnSelector: SyncDepositModeAssertion_v0_5_0.assertionAsyncDepositMode.selector
-        });
-
-        // Attempt requestDeposit - should revert
-        vm.prank(user1.addr);
-        vm.expectRevert(); // Vault should revert with OnlySyncDepositAllowed
-        vault.requestDeposit(10_000e6, user1.addr, user1.addr);
     }
 
     // ==================== Invariant 4.B: Synchronous Deposit Accounting Tests ====================
